@@ -285,7 +285,9 @@ impl ApplicationHandler for App {
                 .create_window(
                     Window::default_attributes()
                         .with_title("Slepming Image Viewer")
-                        .with_name("viewer", "slepming viewer"),
+                        .with_name("viewer", "slepming viewer")
+                        .with_transparent(true)
+                        .with_blur(true),
                 )
                 .unwrap(),
         );
@@ -318,11 +320,7 @@ impl ApplicationHandler for App {
                     image_format,
                     image_extent: window.inner_size().into(),
                     image_usage: ImageUsage::COLOR_ATTACHMENT,
-                    composite_alpha: surface_capabilities
-                        .supported_composite_alpha
-                        .into_iter()
-                        .next()
-                        .unwrap(),
+                    composite_alpha: vulkano::swapchain::CompositeAlpha::PreMultiplied,
                     ..Default::default()
                 },
             )
@@ -428,7 +426,7 @@ impl ApplicationHandler for App {
     fn window_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
-        window_id: winit::window::WindowId,
+        _window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
         let rcx = self.render.as_mut().unwrap();
@@ -459,7 +457,7 @@ impl ApplicationHandler for App {
                     rcx.framebuffers = window_size_dependent_setup(&new_images, &rcx.render_pass);
                     rcx.viewport.extent = window_size.into();
                     rcx.recreate_swapchain = false;
-                    println!(
+                    info!(
                         "Window changed size to: {:?};{:?}",
                         window_size,
                         rcx.swapchain.create_info().image_extent
@@ -494,7 +492,7 @@ impl ApplicationHandler for App {
                 builder
                     .begin_render_pass(
                         RenderPassBeginInfo {
-                            clear_values: vec![Some([0.0, 0.0, 1.0, 1.0].into())],
+                            clear_values: vec![Some([0.0, 0.0, 0.0, 0.0].into())],
                             ..RenderPassBeginInfo::framebuffer(
                                 rcx.framebuffers[image_index as usize].clone(),
                             )
