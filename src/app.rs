@@ -89,6 +89,8 @@ impl App {
                 flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
                 enabled_extensions: InstanceExtensions {
                     khr_wayland_surface: true,
+                    khr_display: true,
+                    ext_swapchain_colorspace: true,
                     ..required_extensions
                 },
                 ..Default::default()
@@ -168,16 +170,16 @@ impl App {
 
         let cube = [
             VertexPos {
-                position: [-0.5, -0.5],
+                position: [-0.9, -0.9],
             },
             VertexPos {
-                position: [-0.5, 0.5],
+                position: [-0.9, 0.9],
             },
             VertexPos {
-                position: [0.5, -0.5],
+                position: [0.9, -0.9],
             },
             VertexPos {
-                position: [0.5, 0.5],
+                position: [0.9, 0.9],
             },
         ];
         let vertex_buffer = Buffer::from_iter(
@@ -232,7 +234,7 @@ impl App {
                 memory_allocator.clone(),
                 ImageCreateInfo {
                     image_type: ImageType::Dim2d,
-                    format: Format::R8G8B8A8_SRGB,
+                    format: Format::B8G8R8A8_SRGB,
                     extent,
                     usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
                     ..Default::default()
@@ -262,6 +264,11 @@ impl App {
         .unwrap();
 
         let _ = uploads.build().unwrap().execute(queue.clone()).unwrap();
+
+        info!(
+            "Device color gamut: {:?}",
+            device.physical_device().display_properties().unwrap()
+        );
 
         App {
             instance: instance,
@@ -306,11 +313,6 @@ impl ApplicationHandler for App {
                 .physical_device()
                 .surface_formats(&surface, Default::default())
                 .unwrap()[0];
-
-            info!(
-                "supported composite alpha {:?}",
-                surface_capabilities.supported_composite_alpha
-            );
 
             Swapchain::new(
                 self.device.clone(),
@@ -560,7 +562,7 @@ impl ApplicationHandler for App {
             _ => (),
         }
     }
-    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+    fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         let rcx = self.render.as_mut().unwrap();
         rcx.window.request_redraw();
     }
@@ -605,7 +607,7 @@ mod vs {
 
         void main() {
             gl_Position = vec4(position, 0.0, 1.0);
-            tex_coords = position + vec2(0.5);
+            tex_coords = position / 1.8 + 0.5;
         }
 
         ",
