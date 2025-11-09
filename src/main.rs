@@ -1,10 +1,10 @@
 mod app;
 
-use std::{any::Any, env};
+use std::{env, process::exit};
 
 use anyhow::Ok;
 use app::App;
-use log::{Level, Log, SetLoggerError, info, logger};
+use log::{Level, Log, SetLoggerError, info, warn};
 use winit::event_loop::EventLoop;
 
 struct SimpleLogger;
@@ -29,9 +29,13 @@ pub fn init() -> Result<(), SetLoggerError> {
 static LOGGER: SimpleLogger = SimpleLogger;
 
 fn main() -> Result<(), anyhow::Error> {
-    init().expect("error initialization logger.");
+    pretty_env_logger::init_timed();
     let args: Vec<String> = env::args().collect();
-    info!("{}", args[1].to_string());
+    if args.len() < 2 {
+        warn!("app haven't argument path to image. Please, set up argument path");
+        exit(-1);
+    }
+    info!("{}", args[1]);
     let event_loop = EventLoop::new()?;
     let mut app = App::new(&args[1], &event_loop);
     event_loop.run_app(&mut app)?;

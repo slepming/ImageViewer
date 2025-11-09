@@ -1,8 +1,9 @@
+use core::time;
 // https://github.com/vulkano-rs/vulkano/blob/master/examples/image/main.rs
-use std::{fs::File, io::BufReader, ops::RangeInclusive, sync::Arc};
+use std::{fs::File, io::BufReader, ops::RangeInclusive, process::exit, sync::Arc};
 
 use image::{GenericImageView, ImageDecoder, ImageReader};
-use log::{info, logger};
+use log::{debug, info};
 use png::{Decoder, Limits, Reader, Transformations};
 use vulkano::{
     DeviceSize, Validated, VulkanError, VulkanLibrary,
@@ -49,8 +50,15 @@ use vulkano::{
     sync::{self, GpuFuture},
 };
 use winit::{
-    application::ApplicationHandler, event::WindowEvent, event_loop::EventLoop,
-    platform::wayland::WindowAttributesExtWayland, window::Window,
+    application::ApplicationHandler,
+    event::{ElementState, WindowEvent},
+    event_loop::EventLoop,
+    keyboard::{Key, KeyCode, NamedKey},
+    platform::{
+        modifier_supplement::KeyEventExtModifierSupplement, wayland::WindowAttributesExtWayland,
+    },
+    raw_window_handle::HasWindowHandle,
+    window::Window,
 };
 
 pub struct App {
@@ -105,7 +113,7 @@ impl App {
             .expect("No Device available");
 
         for family in physical_device.queue_family_properties() {
-            println!("Found available devices: {}", family.queue_count)
+            info!("Found available devices: {}", family.queue_count);
         }
 
         let queue_family_index = physical_device
@@ -299,7 +307,7 @@ impl ApplicationHandler for App {
                 .unwrap(),
         );
 
-        println!("Resolution {:?}", window.inner_size());
+        debug!("Resolution {:?}", window.inner_size());
 
         let surface = Surface::from_window(self.instance.clone(), window.clone()).unwrap();
         let (swapchain, images) = {
@@ -434,7 +442,19 @@ impl ApplicationHandler for App {
         let rcx = self.render.as_mut().unwrap();
 
         match event {
+            WindowEvent::KeyboardInput { event, .. } => {
+                if event.state == ElementState::Pressed && !event.repeat {
+                    match event.key_without_modifiers().as_ref() {
+                        Key::Named(NamedKey::Escape) => {
+                            // can I call CloseRequest?
+                            exit(0);
+                        }
+                        _ => {}
+                    }
+                }
+            }
             WindowEvent::CloseRequested => {
+                debug!("exiting..");
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
