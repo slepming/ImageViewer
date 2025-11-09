@@ -234,14 +234,14 @@ impl App {
                 memory_allocator.clone(),
                 ImageCreateInfo {
                     image_type: ImageType::Dim2d,
-                    format: Format::B8G8R8A8_SRGB,
+                    format: Format::R8G8B8A8_UNORM,
                     extent,
                     usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
                     ..Default::default()
                 },
                 AllocationCreateInfo::default(),
             )
-            .unwrap();
+            .expect("error creating image");
 
             uploads
                 .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(
