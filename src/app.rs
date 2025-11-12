@@ -1,13 +1,12 @@
-use core::time;
 // https://github.com/vulkano-rs/vulkano/blob/master/examples/image/main.rs
-use std::{fs::File, io::BufReader, ops::RangeInclusive, process::exit, sync::Arc};
+use std::{ops::RangeInclusive, process::exit, sync::Arc};
 
-use image::{GenericImageView, ImageDecoder, ImageReader};
+use crate::shaders::rectangle::{frag_rect, vert_rect};
+use image::{GenericImageView, ImageReader};
 use log::{debug, info};
-use png::{Decoder, Limits, Reader, Transformations};
 use vulkano::{
     DeviceSize, Validated, VulkanError, VulkanLibrary,
-    buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer, view},
+    buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer},
     command_buffer::{
         AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferToImageInfo,
         PrimaryCommandBufferAbstract, RenderPassBeginInfo,
@@ -16,10 +15,7 @@ use vulkano::{
     descriptor_set::{
         DescriptorSet, WriteDescriptorSet, allocator::StandardDescriptorSetAllocator,
     },
-    device::{
-        Device, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags,
-        physical::PhysicalDeviceType,
-    },
+    device::{Device, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags},
     format::Format,
     image::{
         Image, ImageCreateInfo, ImageType, ImageUsage,
@@ -34,10 +30,10 @@ use vulkano::{
         graphics::{
             GraphicsPipelineCreateInfo,
             color_blend::{AttachmentBlend, ColorBlendAttachmentState, ColorBlendState},
-            input_assembly::{InputAssemblyState, PrimitiveTopology},
+            input_assembly::InputAssemblyState,
             multisample::MultisampleState,
             rasterization::RasterizationState,
-            vertex_input::{Vertex, VertexBufferDescription, VertexDefinition},
+            vertex_input::{Vertex, VertexDefinition},
             viewport::{Viewport, ViewportState},
         },
         layout::PipelineDescriptorSetLayoutCreateInfo,
@@ -51,13 +47,13 @@ use vulkano::{
 };
 use winit::{
     application::ApplicationHandler,
+    dpi::{PhysicalSize, Size},
     event::{ElementState, WindowEvent},
     event_loop::EventLoop,
-    keyboard::{Key, KeyCode, NamedKey},
+    keyboard::{Key, NamedKey},
     platform::{
         modifier_supplement::KeyEventExtModifierSupplement, wayland::WindowAttributesExtWayland,
     },
-    raw_window_handle::HasWindowHandle,
     window::Window,
 };
 
@@ -302,7 +298,11 @@ impl ApplicationHandler for App {
                         .with_title("Slepming Image Viewer")
                         .with_name("viewer", "slepming viewer")
                         .with_transparent(true)
-                        .with_blur(true),
+                        .with_blur(true)
+                        .with_min_inner_size(Size::Physical(PhysicalSize {
+                            height: 480,
+                            width: 640,
+                        })),
                 )
                 .unwrap(),
         );
@@ -355,11 +355,11 @@ impl ApplicationHandler for App {
         let framebuffers = window_size_dependent_setup(&images, &render_pass);
 
         let pipeline = {
-            let vs = vs::load(self.device.clone())
+            let vs = vert_rect::load(self.device.clone())
                 .unwrap()
                 .entry_point("main")
                 .unwrap();
-            let fs = fs::load(self.device.clone())
+            let fs = frag_rect::load(self.device.clone())
                 .unwrap()
                 .entry_point("main")
                 .unwrap();
@@ -479,8 +479,8 @@ impl ApplicationHandler for App {
                     rcx.framebuffers = window_size_dependent_setup(&new_images, &rcx.render_pass);
                     rcx.viewport.extent = window_size.into();
                     rcx.recreate_swapchain = false;
-                    info!(
-                        "Window changed size to: {:?};{:?}",
+                    debug!(
+                        "Window changed size to: {:?}; swapchain size image extent {:?}",
                         window_size,
                         rcx.swapchain.create_info().image_extent
                     )
@@ -614,16 +614,4 @@ fn window_size_dependent_setup(
             .unwrap()
         })
         .collect()
-}
-
-mod vs {
-    vulkano_shaders::shader! {
-        bytes: "shaders/rect.vert.spv"
-    }
-}
-
-mod fs {
-    vulkano_shaders::shader! {
-        bytes: "shaders/rect.frag.spv"
-    }
 }

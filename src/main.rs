@@ -4,29 +4,9 @@ use std::{env, process::exit};
 
 use anyhow::Ok;
 use app::App;
-use log::{Level, Log, SetLoggerError, info, warn};
+use log::{info, warn};
 use winit::event_loop::EventLoop;
-
-struct SimpleLogger;
-
-impl Log for SimpleLogger {
-    fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= Level::Info
-    }
-    fn log(&self, record: &log::Record) {
-        if self.enabled(record.metadata()) {
-            println!("[{}] {}", record.level(), record.args());
-        }
-    }
-
-    fn flush(&self) {}
-}
-
-pub fn init() -> Result<(), SetLoggerError> {
-    log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Info))
-}
-
-static LOGGER: SimpleLogger = SimpleLogger;
+mod shaders;
 
 fn main() -> Result<(), anyhow::Error> {
     pretty_env_logger::init_timed();
