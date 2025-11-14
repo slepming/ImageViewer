@@ -13,9 +13,9 @@ compile_shaders() {
       fi
     done
   else
-    question=false
+    question='y'
     read -p "shader path not existed.. Create directory? [y/n]: " question
-    if [ "$question" = true ]; then
+    if [ "$question" = 'y' ]; then
       mkdir $shader_path
     fi
     compile_shaders
