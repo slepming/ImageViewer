@@ -260,7 +260,7 @@ impl App {
             device.clone(),
             SamplerCreateInfo {
                 mag_filter: Filter::Linear,
-                min_filter: Filter::Linear,
+                min_filter: Filter::Nearest,
                 address_mode: [SamplerAddressMode::Repeat; 3],
                 ..Default::default()
             },
@@ -291,6 +291,10 @@ impl App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let first_monitor = event_loop
+            .available_monitors()
+            .next()
+            .expect("can't get monitor");
         let window = Arc::new(
             event_loop
                 .create_window(
@@ -302,6 +306,10 @@ impl ApplicationHandler for App {
                         .with_min_inner_size(Size::Physical(PhysicalSize {
                             height: 480,
                             width: 640,
+                        }))
+                        .with_max_inner_size(Size::Physical(PhysicalSize {
+                            height: first_monitor.size().height,
+                            width: first_monitor.size().width,
                         })),
                 )
                 .unwrap(),
