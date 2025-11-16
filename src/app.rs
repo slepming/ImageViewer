@@ -1,9 +1,10 @@
 // https://github.com/vulkano-rs/vulkano/blob/master/examples/image/main.rs
-use std::{ops::RangeInclusive, process::exit, sync::Arc};
+use std::{ops::RangeInclusive, process::exit, result::Result::Ok, sync::Arc};
 
 use crate::shaders::rectangle::{frag_rect, vert_rect};
 use image::{GenericImageView, ImageReader};
-use log::{debug, info};
+use log::{debug, error, info};
+use png::Compression;
 use vulkano::{
     DeviceSize, Validated, VulkanError, VulkanLibrary,
     buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer},
@@ -22,8 +23,14 @@ use vulkano::{
         sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo},
         view::ImageView,
     },
-    instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions},
-    memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
+    instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions, debug},
+    memory::{
+        self,
+        allocator::{
+            AllocationCreateInfo, FreeListAllocator, GenericMemoryAllocator, MemoryTypeFilter,
+            StandardMemoryAllocator,
+        },
+    },
     pipeline::{
         DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
         PipelineShaderStageCreateInfo,
@@ -48,7 +55,7 @@ use vulkano::{
 use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalSize, Size},
-    event::{ElementState, WindowEvent},
+    event::{ElementState, MouseScrollDelta, WindowEvent},
     event_loop::EventLoop,
     keyboard::{Key, NamedKey},
     platform::{
@@ -61,13 +68,18 @@ pub struct App {
     instance: Arc<Instance>,
     device: Arc<Device>,
     queue: Arc<Queue>,
-    buffer: Subbuffer<i32>,
-    vertex_buffer: Subbuffer<[VertexPos]>,
-    command_buffer_allocate: Arc<StandardCommandBufferAllocator>,
-    descriptor_allocator: Arc<StandardDescriptorSetAllocator>,
+    memory: MemoryApp,
     texture: Arc<ImageView>,
     sampler: Arc<Sampler>,
+    current_image: String,
     render: Option<RenderContext>,
+}
+
+pub struct MemoryApp {
+    vertex_buffer: Arc<Subbuffer<[ImagePos]>>,
+    memory_allocator: Arc<GenericMemoryAllocator<FreeListAllocator>>,
+    command_buffer_allocate: Arc<StandardCommandBufferAllocator>,
+    descriptor_allocator: Arc<StandardDescriptorSetAllocator>,
 }
 
 pub struct RenderContext {
@@ -148,21 +160,6 @@ impl App {
         );
 
         let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
-        let data = 12;
-        let buffer = Buffer::from_data(
-            memory_allocator.clone(),
-            BufferCreateInfo {
-                usage: BufferUsage::UNIFORM_BUFFER,
-                ..Default::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..Default::default()
-            },
-            data,
-        )
-        .expect("Faied to create buffer");
         let descriptor_set_allocator = Arc::new(StandardDescriptorSetAllocator::new(
             device.clone(),
             Default::default(),
@@ -173,40 +170,48 @@ impl App {
         ));
 
         let cube = [
-            VertexPos {
-                position: [-0.9, -0.9],
+            ImagePos {
+                position: [-1.0, -1.0],
+                zoom: 0.0,
             },
-            VertexPos {
-                position: [-0.9, 0.9],
+            ImagePos {
+                position: [-1.0, 1.0],
+                zoom: 0.0,
             },
-            VertexPos {
-                position: [0.9, -0.9],
+            ImagePos {
+                position: [1.0, -1.0],
+                zoom: 0.0,
             },
-            VertexPos {
-                position: [0.9, 0.9],
+            ImagePos {
+                position: [1.0, 1.0],
+                zoom: 0.0,
             },
         ];
-        let vertex_buffer = Buffer::from_iter(
-            memory_allocator.clone(),
-            BufferCreateInfo {
-                usage: BufferUsage::VERTEX_BUFFER,
-                ..Default::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..Default::default()
-            },
-            cube,
-        )
-        .expect("Creating vertex buffer failed");
-        println!("vertex_buffer: {:?}", vertex_buffer.len());
+        let vertex_buffer = Arc::new(
+            Buffer::from_iter(
+                memory_allocator.clone(),
+                BufferCreateInfo {
+                    usage: BufferUsage::VERTEX_BUFFER,
+                    ..Default::default()
+                },
+                AllocationCreateInfo {
+                    memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                        | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                    ..Default::default()
+                },
+                cube,
+            )
+            .expect("Creating vertex buffer failed"),
+        );
+        debug!("vertex_buffer: {}", vertex_buffer.len());
+
         let mut uploads = AutoCommandBufferBuilder::primary(
             command_buffer_allocate.clone(),
             queue.queue_family_index(),
             vulkano::command_buffer::CommandBufferUsage::OneTimeSubmit,
         )
         .unwrap();
+
         let texture = {
             let reader = ImageReader::open(image).unwrap();
             let decode = reader.decode().expect("error decoding image");
@@ -256,18 +261,20 @@ impl App {
 
             ImageView::new_default(image.clone()).unwrap()
         };
+
+        let _ = uploads.build().unwrap().execute(queue.clone()).unwrap();
+
         let sampler = Sampler::new(
             device.clone(),
             SamplerCreateInfo {
                 mag_filter: Filter::Linear,
                 min_filter: Filter::Nearest,
-                address_mode: [SamplerAddressMode::Repeat; 3],
+                address_mode: [SamplerAddressMode::ClampToBorder; 3],
+                border_color: vulkano::image::sampler::BorderColor::FloatTransparentBlack,
                 ..Default::default()
             },
         )
         .unwrap();
-
-        let _ = uploads.build().unwrap().execute(queue.clone()).unwrap();
 
         info!(
             "Device color gamut: {:?}",
@@ -278,14 +285,34 @@ impl App {
             instance: instance,
             device: device,
             queue: queue,
-            buffer: buffer,
-            command_buffer_allocate: command_buffer_allocate,
-            descriptor_allocator: descriptor_set_allocator,
+            memory: MemoryApp {
+                vertex_buffer: vertex_buffer,
+                memory_allocator: memory_allocator,
+                command_buffer_allocate: command_buffer_allocate,
+                descriptor_allocator: descriptor_set_allocator,
+            },
+            current_image: image.to_string(),
             sampler: sampler,
             texture: texture,
             render: None,
-            vertex_buffer: vertex_buffer,
         }
+    }
+
+    pub fn zoom_image(&mut self, cube: [ImagePos; 4]) {
+        let buffer = Buffer::from_iter(
+            self.memory.memory_allocator.clone(),
+            BufferCreateInfo {
+                usage: BufferUsage::VERTEX_BUFFER,
+                ..Default::default()
+            },
+            AllocationCreateInfo {
+                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                ..Default::default()
+            },
+            cube,
+        ); // mb i need create new AutoCommandBufferBuilder?
+        debug!("vertex_buffer: {}", self.memory.vertex_buffer.len());
     }
 }
 
@@ -371,7 +398,7 @@ impl ApplicationHandler for App {
                 .unwrap()
                 .entry_point("main")
                 .unwrap();
-            let vertex_input_state = VertexPos::per_vertex().definition(&vs).unwrap();
+            let vertex_input_state = ImagePos::per_vertex().definition(&vs).unwrap();
             let stages = [
                 PipelineShaderStageCreateInfo::new(vs),
                 PipelineShaderStageCreateInfo::new(fs),
@@ -416,7 +443,7 @@ impl ApplicationHandler for App {
 
         let layout = &pipeline.layout().set_layouts()[0];
         let descriptor_set = DescriptorSet::new(
-            self.descriptor_allocator.clone(),
+            self.memory.descriptor_allocator.clone(),
             layout.clone(),
             [
                 WriteDescriptorSet::sampler(0, self.sampler.clone()),
@@ -461,6 +488,30 @@ impl ApplicationHandler for App {
                     }
                 }
             }
+            WindowEvent::MouseWheel { delta, .. } => match delta {
+                MouseScrollDelta::LineDelta(y, ..) => {
+                    let new_pos = [
+                        ImagePos {
+                            position: [-1.0, -1.0],
+                            zoom: y,
+                        },
+                        ImagePos {
+                            position: [-1.0, 1.0],
+                            zoom: y,
+                        },
+                        ImagePos {
+                            position: [1.0, -1.0],
+                            zoom: y,
+                        },
+                        ImagePos {
+                            position: [1.0, 1.0],
+                            zoom: y,
+                        },
+                    ];
+                    self.zoom_image(&new_pos);
+                }
+                _ => {}
+            },
             WindowEvent::CloseRequested => {
                 debug!("exiting..");
                 event_loop.exit();
@@ -513,7 +564,7 @@ impl ApplicationHandler for App {
                 }
 
                 let mut builder = AutoCommandBufferBuilder::primary(
-                    self.command_buffer_allocate.clone(),
+                    self.memory.command_buffer_allocate.clone(),
                     self.queue.queue_family_index(),
                     CommandBufferUsage::OneTimeSubmit,
                 )
@@ -541,12 +592,12 @@ impl ApplicationHandler for App {
                         rcx.descriptor_set.clone(),
                     )
                     .unwrap()
-                    .bind_vertex_buffers(0, self.vertex_buffer.clone())
+                    .bind_vertex_buffers(0, self.memory.vertex_buffer.as_ref().clone())
                     .unwrap();
 
                 unsafe {
                     builder
-                        .draw(self.vertex_buffer.len() as u32, 1, 0, 0)
+                        .draw(self.memory.vertex_buffer.len() as u32, 1, 0, 0)
                         .unwrap();
                 }
 
@@ -578,7 +629,7 @@ impl ApplicationHandler for App {
                         rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
                     }
                     Err(e) => {
-                        println!("failed to flush future: {e}");
+                        error!("failed to flush future: {e}");
                         rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
                     }
                 }
@@ -596,11 +647,13 @@ impl ApplicationHandler for App {
     }
 }
 
-#[derive(BufferContents, Vertex)]
+#[derive(BufferContents, Vertex, Clone, Copy)]
 #[repr(C)]
-struct VertexPos {
+pub struct ImagePos {
     #[format(R32G32_SFLOAT)]
     position: [f32; 2],
+    #[format(R32_SFLOAT)]
+    zoom: f32,
 }
 
 fn window_size_dependent_setup(
