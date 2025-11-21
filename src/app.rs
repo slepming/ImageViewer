@@ -1,5 +1,10 @@
 // https://github.com/vulkano-rs/vulkano/blob/master/examples/image/main.rs
-use std::{ops::RangeInclusive, process::exit, result::Result::Ok, sync::Arc};
+use std::{
+    ops::RangeInclusive,
+    process::exit,
+    result::Result::Ok,
+    sync::{Arc, Mutex},
+};
 
 use crate::shaders::rectangle::{frag_rect, vert_rect};
 use image::{GenericImageView, ImageReader};
@@ -9,7 +14,7 @@ use vulkano::{
     DeviceSize, Validated, VulkanError, VulkanLibrary,
     buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer},
     command_buffer::{
-        AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferToImageInfo,
+        AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo,
         PrimaryCommandBufferAbstract, RenderPassBeginInfo,
         allocator::StandardCommandBufferAllocator,
     },
@@ -76,7 +81,7 @@ pub struct App {
 }
 
 pub struct MemoryApp {
-    vertex_buffer: Arc<Subbuffer<[ImagePos]>>,
+    vertex_buffer: Arc<Mutex<Subbuffer<[ImagePos]>>>,
     memory_allocator: Arc<GenericMemoryAllocator<FreeListAllocator>>,
     command_buffer_allocate: Arc<StandardCommandBufferAllocator>,
     descriptor_allocator: Arc<StandardDescriptorSetAllocator>,
@@ -187,7 +192,7 @@ impl App {
                 zoom: 0.0,
             },
         ];
-        let vertex_buffer = Arc::new(
+        let vertex_buffer = Arc::new(Mutex::new(
             Buffer::from_iter(
                 memory_allocator.clone(),
                 BufferCreateInfo {
@@ -202,8 +207,8 @@ impl App {
                 cube,
             )
             .expect("Creating vertex buffer failed"),
-        );
-        debug!("vertex_buffer: {}", vertex_buffer.len());
+        ));
+        debug!("vertex_buffer: {}", vertex_buffer.lock().unwrap().len());
 
         let mut uploads = AutoCommandBufferBuilder::primary(
             command_buffer_allocate.clone(),
@@ -298,21 +303,24 @@ impl App {
         }
     }
 
-    pub fn zoom_image(&mut self, cube: [ImagePos; 4]) {
-        let buffer = Buffer::from_iter(
-            self.memory.memory_allocator.clone(),
-            BufferCreateInfo {
-                usage: BufferUsage::VERTEX_BUFFER,
-                ..Default::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..Default::default()
-            },
-            cube,
-        ); // mb i need create new AutoCommandBufferBuilder?
-        debug!("vertex_buffer: {}", self.memory.vertex_buffer.len());
+    pub fn zoom_image(&mut self, cube: [ImagePos; 4]) -> Option<Subbuffer<[ImagePos]>> {
+        debug!("Zoom applied");
+        Some(
+            Buffer::from_iter(
+                self.memory.memory_allocator.clone(),
+                BufferCreateInfo {
+                    usage: BufferUsage::VERTEX_BUFFER,
+                    ..Default::default()
+                },
+                AllocationCreateInfo {
+                    memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                        | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                    ..Default::default()
+                },
+                cube,
+            )
+            .unwrap(),
+        )
     }
 }
 
@@ -475,6 +483,7 @@ impl ApplicationHandler for App {
         event: WindowEvent,
     ) {
         let rcx = self.render.as_mut().unwrap();
+        let mut next_vertex_buffer: Option<Subbuffer<[ImagePos]>> = None;
 
         match event {
             WindowEvent::KeyboardInput { event, .. } => {
@@ -508,7 +517,7 @@ impl ApplicationHandler for App {
                             zoom: y,
                         },
                     ];
-                    self.zoom_image(&new_pos);
+                    next_vertex_buffer = self.zoom_image(new_pos);
                 }
                 _ => {}
             },
@@ -570,6 +579,15 @@ impl ApplicationHandler for App {
                 )
                 .unwrap();
 
+                if let Some(buf) = next_vertex_buffer {
+                    builder
+                        .copy_buffer(CopyBufferInfo::buffers(
+                            buf,
+                            self.memory.vertex_buffer.lock().unwrap().clone(),
+                        ))
+                        .unwrap();
+                }
+
                 builder
                     .begin_render_pass(
                         RenderPassBeginInfo {
@@ -592,12 +610,17 @@ impl ApplicationHandler for App {
                         rcx.descriptor_set.clone(),
                     )
                     .unwrap()
-                    .bind_vertex_buffers(0, self.memory.vertex_buffer.as_ref().clone())
-                    .unwrap();
+                    .bind_vertex_buffers(0, self.memory.vertex_buffer.lock().unwrap().clone())
+                    .expect("Command buffer builder error");
 
                 unsafe {
                     builder
-                        .draw(self.memory.vertex_buffer.len() as u32, 1, 0, 0)
+                        .draw(
+                            self.memory.vertex_buffer.lock().unwrap().len() as u32,
+                            1,
+                            0,
+                            0,
+                        )
                         .unwrap();
                 }
 
