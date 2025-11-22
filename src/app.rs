@@ -71,6 +71,7 @@ use winit::{
 
 pub struct App {
     instance: Arc<Instance>,
+    next_vertex_buffer: Arc<Mutex<Option<Subbuffer<[ImagePos]>>>>,
     device: Arc<Device>,
     queue: Arc<Queue>,
     memory: MemoryApp,
@@ -196,7 +197,9 @@ impl App {
             Buffer::from_iter(
                 memory_allocator.clone(),
                 BufferCreateInfo {
-                    usage: BufferUsage::VERTEX_BUFFER,
+                    usage: BufferUsage::VERTEX_BUFFER
+                        | BufferUsage::TRANSFER_SRC
+                        | BufferUsage::TRANSFER_DST,
                     ..Default::default()
                 },
                 AllocationCreateInfo {
@@ -287,6 +290,7 @@ impl App {
         );
 
         App {
+            next_vertex_buffer: Arc::new(Mutex::new(None)),
             instance: instance,
             device: device,
             queue: queue,
@@ -309,7 +313,9 @@ impl App {
             Buffer::from_iter(
                 self.memory.memory_allocator.clone(),
                 BufferCreateInfo {
-                    usage: BufferUsage::VERTEX_BUFFER,
+                    usage: BufferUsage::VERTEX_BUFFER
+                        | BufferUsage::TRANSFER_SRC
+                        | BufferUsage::TRANSFER_DST,
                     ..Default::default()
                 },
                 AllocationCreateInfo {
@@ -483,7 +489,6 @@ impl ApplicationHandler for App {
         event: WindowEvent,
     ) {
         let rcx = self.render.as_mut().unwrap();
-        let mut next_vertex_buffer: Option<Subbuffer<[ImagePos]>> = None;
 
         match event {
             WindowEvent::KeyboardInput { event, .. } => {
@@ -517,7 +522,7 @@ impl ApplicationHandler for App {
                             zoom: y,
                         },
                     ];
-                    next_vertex_buffer = self.zoom_image(new_pos);
+                    *self.next_vertex_buffer.lock().unwrap() = self.zoom_image(new_pos);
                 }
                 _ => {}
             },
@@ -579,13 +584,16 @@ impl ApplicationHandler for App {
                 )
                 .unwrap();
 
-                if let Some(buf) = next_vertex_buffer {
-                    builder
-                        .copy_buffer(CopyBufferInfo::buffers(
-                            buf,
-                            self.memory.vertex_buffer.lock().unwrap().clone(),
-                        ))
-                        .unwrap();
+                if let Ok(mut guard) = self.next_vertex_buffer.lock() {
+                    if let Some(buf) = guard.take() {
+                        debug!("value next_vertex_buffer is not None");
+                        builder
+                            .copy_buffer(CopyBufferInfo::buffers(
+                                buf,
+                                self.memory.vertex_buffer.lock().unwrap().clone(),
+                            ))
+                            .unwrap();
+                    }
                 }
 
                 builder
