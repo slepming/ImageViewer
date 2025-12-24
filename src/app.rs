@@ -197,9 +197,7 @@ impl App {
             Buffer::from_iter(
                 memory_allocator.clone(),
                 BufferCreateInfo {
-                    usage: BufferUsage::VERTEX_BUFFER
-                        | BufferUsage::TRANSFER_SRC
-                        | BufferUsage::TRANSFER_DST,
+                    usage: BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST,
                     ..Default::default()
                 },
                 AllocationCreateInfo {
@@ -507,22 +505,25 @@ impl ApplicationHandler for App {
                     let new_pos = [
                         ImagePos {
                             position: [-1.0, -1.0],
-                            zoom: y,
+                            zoom: y + 1.0,
                         },
                         ImagePos {
                             position: [-1.0, 1.0],
-                            zoom: y,
+                            zoom: y + 1.0,
                         },
                         ImagePos {
                             position: [1.0, -1.0],
-                            zoom: y,
+                            zoom: y + 1.0,
                         },
                         ImagePos {
                             position: [1.0, 1.0],
-                            zoom: y,
+                            zoom: y + 1.0,
                         },
                     ];
-                    *self.next_vertex_buffer.lock().unwrap() = self.zoom_image(new_pos);
+                    *self
+                        .next_vertex_buffer
+                        .lock()
+                        .expect("next_vertex_buffer is locked") = self.zoom_image(new_pos);
                 }
                 _ => {}
             },
@@ -592,7 +593,7 @@ impl ApplicationHandler for App {
                                 buf,
                                 self.memory.vertex_buffer.lock().unwrap().clone(),
                             ))
-                            .unwrap();
+                            .expect("command builder error");
                     }
                 }
 
