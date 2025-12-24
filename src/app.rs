@@ -508,7 +508,7 @@ impl ApplicationHandler for App {
                             zoom: y,
                         },
                     ];
-                    self.zoom_image(&new_pos);
+                    self.zoom_image(new_pos.clone());
                 }
                 _ => {}
             },
