@@ -58,11 +58,14 @@ use winit::{
     event::{ElementState, MouseScrollDelta, WindowEvent},
     event_loop::EventLoop,
     keyboard::{Key, NamedKey},
-    platform::{
-        modifier_supplement::KeyEventExtModifierSupplement, wayland::WindowAttributesExtWayland,
-    },
+    platform::modifier_supplement::KeyEventExtModifierSupplement,
     window::Window,
 };
+
+#[cfg(target_os = "linux")]
+use winit::platform::wayland::WindowAttributesExtWayland;
+
+const VALIDATION_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
 pub struct App {
     instance: Arc<Instance>,
@@ -71,6 +74,7 @@ pub struct App {
     memory: MemoryApp,
     texture: Arc<ImageView>,
     sampler: Arc<Sampler>,
+    #[allow(dead_code)]
     current_image: String,
     render: Option<RenderContext>,
 }
@@ -91,6 +95,7 @@ pub struct RenderContext {
     viewport: Viewport,
     descriptor_set: Arc<DescriptorSet>,
     recreate_swapchain: bool,
+    #[allow(dead_code)]
     surface: Arc<Surface>,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
 }
@@ -99,16 +104,32 @@ impl App {
     pub fn new(image: &str, e: &EventLoop<()>) -> App {
         let library = VulkanLibrary::new().expect("no local Vulkan library/dll");
         let required_extensions = Surface::required_extensions(&e).unwrap();
+        let layers = VALIDATION_LAYERS
+            .iter()
+            .map(|&layer| layer.to_string())
+            .collect::<Vec<String>>();
+        #[cfg(target_os = "linux")]
         let instance = Instance::new(
             library,
             InstanceCreateInfo {
                 flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
+                enabled_layers: layers,
                 enabled_extensions: InstanceExtensions {
                     khr_wayland_surface: true,
                     khr_display: true,
                     ext_swapchain_colorspace: true,
                     ..required_extensions
                 },
+                ..Default::default()
+            },
+        )
+        .expect("failed to create instance");
+        #[cfg(target_os = "windows")]
+        let instance = Instance::new(
+            library,
+            InstanceCreateInfo {
+                flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
+                enabled_extensions: required_extensions,
                 ..Default::default()
             },
         )
@@ -322,6 +343,7 @@ impl ApplicationHandler for App {
             .available_monitors()
             .next()
             .expect("can't get monitor");
+        #[cfg(target_os = "linux")]
         let window = Arc::new(
             event_loop
                 .create_window(
@@ -330,6 +352,24 @@ impl ApplicationHandler for App {
                         .with_name("viewer", "slepming viewer")
                         .with_transparent(true)
                         .with_blur(true)
+                        .with_min_inner_size(Size::Physical(PhysicalSize {
+                            height: 480,
+                            width: 640,
+                        }))
+                        .with_max_inner_size(Size::Physical(PhysicalSize {
+                            height: first_monitor.size().height,
+                            width: first_monitor.size().width,
+                        })),
+                )
+                .unwrap(),
+        );
+
+        #[cfg(target_os = "windows")]
+        let window = Arc::new(
+            event_loop
+                .create_window(
+                    Window::default_attributes()
+                        .with_title("Slepming Image Viewer")
                         .with_min_inner_size(Size::Physical(PhysicalSize {
                             height: 480,
                             width: 640,

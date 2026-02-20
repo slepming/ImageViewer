@@ -17,6 +17,7 @@ fn main() -> Result<(), anyhow::Error> {
     }
     info!("{}", args[1]);
     let event_loop = EventLoop::new()?;
+    event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
     let mut app = App::new(&args[1], &event_loop);
     event_loop.run_app(&mut app)?;
     Ok(())
