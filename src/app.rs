@@ -516,8 +516,8 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => match delta {
-                MouseScrollDelta::LineDelta(..) => {
-                    todo!()
+                MouseScrollDelta::LineDelta(y, ..) => {
+                    self.app_data.zoom += y;
                 }
                 MouseScrollDelta::PixelDelta(p) => {
                     self.app_data.zoom += p.y as f32;
