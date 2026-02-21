@@ -21,3 +21,6 @@ version = "1.0"
 
 [dependencies.image]
 version = "0.25"
+
+[profile.dev]
+opt-level = 1 

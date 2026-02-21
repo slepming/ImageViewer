@@ -135,19 +135,23 @@ impl App {
             .expect("No Device available");
 
         for family in physical_device.queue_family_properties() {
-            info!("Found available devices: {}", family.queue_count);
+            debug!(
+                "Found a queue family with {:?} queue(s) flags {:?}",
+                family.queue_count, family.queue_flags
+            );
         }
 
         let queue_family_index = physical_device
             .queue_family_properties()
             .iter()
             .enumerate()
-            .position(|(_queue_family_index, queue_family_properties)| {
+            .position(|(_, queue_family_properties)| {
                 queue_family_properties
                     .queue_flags
                     .contains(QueueFlags::GRAPHICS)
             })
-            .expect("Could not find a graphical device") as u32;
+            .expect("Couldn't find a graphical queue family")
+            as u32;
 
         let (device, mut queues) = Device::new(
             physical_device,
@@ -167,7 +171,7 @@ impl App {
 
         let queue = queues.next().unwrap();
 
-        println!(
+        debug!(
             "Founded device {:?}, Queue: {:?}",
             device.physical_device().properties().device_name,
             queue
@@ -230,7 +234,7 @@ impl App {
             let reader = ImageReader::open(image).unwrap();
             let decode = reader.decode().expect("error decoding image");
             let info = decode.dimensions();
-            info!("{:?}", info);
+            debug!("{:?}", info);
             let extent = [info.0, info.1, 1];
 
             let upload_buffer: Subbuffer<[u8]> = Buffer::new_slice(
@@ -273,7 +277,7 @@ impl App {
                 ))
                 .unwrap();
 
-            ImageView::new_default(image.clone()).unwrap()
+            ImageView::new_default(image).unwrap()
         };
 
         let _ = uploads.build().unwrap().execute(queue.clone()).unwrap();
@@ -290,24 +294,24 @@ impl App {
         )
         .unwrap();
 
-        info!(
+        debug!(
             "Device color gamut: {:?}",
             device.physical_device().display_properties().unwrap()
         );
 
         App {
-            instance: instance,
-            device: device,
-            queue: queue,
+            instance,
+            device,
+            queue,
             memory: MemoryApp {
-                vertex_buffer: vertex_buffer,
-                memory_allocator: memory_allocator,
-                command_buffer_allocate: command_buffer_allocate,
+                vertex_buffer,
+                memory_allocator,
+                command_buffer_allocate,
                 descriptor_allocator: descriptor_set_allocator,
             },
             current_image: image.to_string(),
-            sampler: sampler,
-            texture: texture,
+            sampler,
+            texture,
             render: None,
         }
     }
@@ -325,7 +329,7 @@ impl App {
                 ..Default::default()
             },
             cube,
-        ); // mb i need create new AutoCommandBufferBuilder?
+        ); // FIX: to create zoom I need create new buffer for image and send command to command queue
         debug!("vertex_buffer: {}", self.memory.vertex_buffer.len());
     }
 }
