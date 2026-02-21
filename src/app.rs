@@ -170,7 +170,7 @@ impl App {
         )
         .expect("failed to create device");
 
-        let queue = queues.next().unwrap();
+        let queue = queues.next().unwrap(); // Because I have graphic queue family with one queue
 
         debug!(
             "Founded device {:?}, Queue: {:?}",
