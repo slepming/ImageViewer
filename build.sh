@@ -25,13 +25,20 @@ compile_shaders() {
 project_building() {
   echo "building project.."
   version="debug"
-  read -p "release/debug/clean?(default run) " version
-  if [ "$version" = "release" ]; then
+  echo "w-r/w-d (windows release, windows debug)"
+  read -p "n-r/n-d/c?(default run) " version
+  if [ "$version" = "n-r" ]; then
     cargo build --release
-  elif [ "$version" = "clean" ]; then
+  elif [ "$version" = "c" ]; then
     cargo clean
-  elif [ "$version" = "debug" ]; then
+  elif [ "$version" = "n-d" ]; then
     cargo build
+  elif [ "$version" = "w-r" ]; then
+    echo "windows release building for x86_64-pc-windows-gnu"
+    cargo build --release --target x86_64-pc-windows-gnu
+  elif [ "$version" = "w-d" ]; then
+    echo "windows building for x86_64-pc-windows-gnu"
+    cargo build --target x86_64-pc-windows-gnu
   else
     cargo run "$path_to_image"
   fi
