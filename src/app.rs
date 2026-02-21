@@ -65,8 +65,6 @@ use winit::{
 #[cfg(target_os = "linux")]
 use winit::platform::wayland::WindowAttributesExtWayland;
 
-const VALIDATION_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
-
 pub struct App {
     instance: Arc<Instance>,
     device: Arc<Device>,
@@ -104,16 +102,11 @@ impl App {
     pub fn new(image: &str, e: &EventLoop<()>) -> App {
         let library = VulkanLibrary::new().expect("no local Vulkan library/dll");
         let required_extensions = Surface::required_extensions(&e).unwrap();
-        let layers = VALIDATION_LAYERS
-            .iter()
-            .map(|&layer| layer.to_string())
-            .collect::<Vec<String>>();
         #[cfg(target_os = "linux")]
         let instance = Instance::new(
             library,
             InstanceCreateInfo {
                 flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
-                enabled_layers: layers,
                 enabled_extensions: InstanceExtensions {
                     khr_wayland_surface: true,
                     khr_display: true,
