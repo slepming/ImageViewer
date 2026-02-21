@@ -3,8 +3,7 @@ use std::{ops::RangeInclusive, process::exit, result::Result::Ok, sync::Arc};
 
 use crate::shaders::rectangle::{frag_rect, vert_rect};
 use image::{GenericImageView, ImageReader};
-use log::{debug, error, info};
-use png::Compression;
+use log::{debug, error};
 use vulkano::{
     DeviceSize, Validated, VulkanError, VulkanLibrary,
     buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer},
@@ -23,13 +22,10 @@ use vulkano::{
         sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo},
         view::ImageView,
     },
-    instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions, debug},
-    memory::{
-        self,
-        allocator::{
-            AllocationCreateInfo, FreeListAllocator, GenericMemoryAllocator, MemoryTypeFilter,
-            StandardMemoryAllocator,
-        },
+    instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions},
+    memory::allocator::{
+        AllocationCreateInfo, FreeListAllocator, GenericMemoryAllocator, MemoryTypeFilter,
+        StandardMemoryAllocator,
     },
     pipeline::{
         DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
@@ -74,11 +70,16 @@ pub struct App {
     sampler: Arc<Sampler>,
     #[allow(dead_code)]
     current_image: String,
+    app_data: AppData,
     render: Option<RenderContext>,
 }
 
+pub struct AppData {
+    cube: Arc<[ImagePos; 4]>,
+    zoom: f32,
+}
+
 pub struct MemoryApp {
-    vertex_buffer: Arc<Subbuffer<[ImagePos]>>,
     memory_allocator: Arc<GenericMemoryAllocator<FreeListAllocator>>,
     command_buffer_allocate: Arc<StandardCommandBufferAllocator>,
     descriptor_allocator: Arc<StandardDescriptorSetAllocator>,
@@ -304,33 +305,19 @@ impl App {
             device,
             queue,
             memory: MemoryApp {
-                vertex_buffer,
                 memory_allocator,
                 command_buffer_allocate,
                 descriptor_allocator: descriptor_set_allocator,
             },
             current_image: image.to_string(),
+            app_data: AppData {
+                cube: Arc::new(cube),
+                zoom: 0.0,
+            },
             sampler,
             texture,
             render: None,
         }
-    }
-
-    pub fn zoom_image(&mut self, cube: [ImagePos; 4]) {
-        let buffer = Buffer::from_iter(
-            self.memory.memory_allocator.clone(),
-            BufferCreateInfo {
-                usage: BufferUsage::VERTEX_BUFFER,
-                ..Default::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..Default::default()
-            },
-            cube,
-        ); // FIX: to create zoom I need create new buffer for image and send command to command queue
-        debug!("vertex_buffer: {}", self.memory.vertex_buffer.len());
     }
 }
 
@@ -493,16 +480,16 @@ impl ApplicationHandler for App {
         let previous_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
 
         self.render = Some(RenderContext {
-            previous_frame_end: previous_frame_end,
-            descriptor_set: descriptor_set,
-            framebuffers: framebuffers,
-            pipeline: pipeline,
+            previous_frame_end,
+            descriptor_set,
+            framebuffers,
+            pipeline,
             recreate_swapchain: false,
-            render_pass: render_pass,
-            viewport: viewport,
-            surface: surface,
-            window: window,
-            swapchain: swapchain,
+            render_pass,
+            viewport,
+            surface,
+            window,
+            swapchain,
         });
     }
     fn window_event(
@@ -521,33 +508,20 @@ impl ApplicationHandler for App {
                             // can I call CloseRequest?
                             exit(0);
                         }
+                        Key::Character("C") => {
+                            exit(0);
+                        }
                         _ => {}
                     }
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => match delta {
-                MouseScrollDelta::LineDelta(y, ..) => {
-                    let new_pos = [
-                        ImagePos {
-                            position: [-1.0, -1.0],
-                            zoom: y,
-                        },
-                        ImagePos {
-                            position: [-1.0, 1.0],
-                            zoom: y,
-                        },
-                        ImagePos {
-                            position: [1.0, -1.0],
-                            zoom: y,
-                        },
-                        ImagePos {
-                            position: [1.0, 1.0],
-                            zoom: y,
-                        },
-                    ];
-                    self.zoom_image(new_pos.clone());
+                MouseScrollDelta::LineDelta(..) => {
+                    todo!()
                 }
-                _ => {}
+                MouseScrollDelta::PixelDelta(p) => {
+                    self.app_data.zoom += p.y as f32;
+                }
             },
             WindowEvent::CloseRequested => {
                 debug!("exiting..");
@@ -559,6 +533,34 @@ impl ApplicationHandler for App {
                 if window_size.width == 0 || window_size.height == 0 {
                     return;
                 }
+
+                let cube: Vec<ImagePos> = self
+                    .app_data
+                    .cube
+                    .clone()
+                    .iter()
+                    .map(|v| ImagePos {
+                        position: v.position,
+                        zoom: self.app_data.zoom,
+                    })
+                    .collect();
+
+                debug!("{:?}", cube);
+
+                let vertex_buffer = Buffer::from_iter(
+                    self.memory.memory_allocator.clone(),
+                    BufferCreateInfo {
+                        usage: BufferUsage::VERTEX_BUFFER,
+                        ..Default::default()
+                    },
+                    AllocationCreateInfo {
+                        memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                            | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                        ..Default::default()
+                    },
+                    cube,
+                )
+                .expect("error creation vertex buffer");
 
                 rcx.previous_frame_end.as_mut().unwrap().cleanup_finished();
 
@@ -629,12 +631,12 @@ impl ApplicationHandler for App {
                         rcx.descriptor_set.clone(),
                     )
                     .unwrap()
-                    .bind_vertex_buffers(0, self.memory.vertex_buffer.as_ref().clone())
+                    .bind_vertex_buffers(0, vertex_buffer.clone())
                     .unwrap();
 
                 unsafe {
                     builder
-                        .draw(self.memory.vertex_buffer.len() as u32, 1, 0, 0)
+                        .draw(vertex_buffer.clone().len() as u32, 1, 0, 0)
                         .unwrap();
                 }
 
@@ -684,7 +686,7 @@ impl ApplicationHandler for App {
     }
 }
 
-#[derive(BufferContents, Vertex, Clone, Copy)]
+#[derive(BufferContents, Vertex, Clone, Copy, Debug)]
 #[repr(C)]
 pub struct ImagePos {
     #[format(R32G32_SFLOAT)]
