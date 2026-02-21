@@ -123,7 +123,10 @@ impl App {
             library,
             InstanceCreateInfo {
                 flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
-                enabled_extensions: required_extensions,
+                enabled_extensions: InstanceExtensions {
+                    khr_win32_surface: true,
+                    ..required_extensions
+                },
                 ..Default::default()
             },
         )
@@ -206,23 +209,6 @@ impl App {
                 zoom: 0.0,
             },
         ];
-        let vertex_buffer = Arc::new(
-            Buffer::from_iter(
-                memory_allocator.clone(),
-                BufferCreateInfo {
-                    usage: BufferUsage::VERTEX_BUFFER,
-                    ..Default::default()
-                },
-                AllocationCreateInfo {
-                    memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                        | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                    ..Default::default()
-                },
-                cube,
-            )
-            .expect("Creating vertex buffer failed"),
-        );
-        debug!("vertex_buffer: {}", vertex_buffer.len());
 
         let mut uploads = AutoCommandBufferBuilder::primary(
             command_buffer_allocate.clone(),
@@ -235,7 +221,7 @@ impl App {
             let reader = ImageReader::open(image).unwrap();
             let decode = reader.decode().expect("error decoding image");
             let info = decode.dimensions();
-            debug!("{:?}", info);
+            debug!("image dimension {:?}", info);
             let extent = [info.0, info.1, 1];
 
             let upload_buffer: Subbuffer<[u8]> = Buffer::new_slice(
@@ -544,8 +530,6 @@ impl ApplicationHandler for App {
                         zoom: self.app_data.zoom,
                     })
                     .collect();
-
-                debug!("{:?}", cube);
 
                 let vertex_buffer = Buffer::from_iter(
                     self.memory.memory_allocator.clone(),
