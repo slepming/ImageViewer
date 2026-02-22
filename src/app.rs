@@ -22,7 +22,7 @@ use vulkano::{
         sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo},
         view::ImageView,
     },
-    instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions},
+    instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions, debug},
     memory::allocator::{
         AllocationCreateInfo, FreeListAllocator, GenericMemoryAllocator, MemoryTypeFilter,
         StandardMemoryAllocator,
@@ -491,10 +491,6 @@ impl ApplicationHandler for App {
                 if event.state == ElementState::Pressed && !event.repeat {
                     match event.key_without_modifiers().as_ref() {
                         Key::Named(NamedKey::Escape) => {
-                            // can I call CloseRequest?
-                            exit(0);
-                        }
-                        Key::Character("C") => {
                             exit(0);
                         }
                         _ => {}
@@ -502,7 +498,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => match delta {
-                MouseScrollDelta::LineDelta(y, ..) => {
+                MouseScrollDelta::LineDelta(.., y) => {
                     self.app_data.zoom += y;
                 }
                 MouseScrollDelta::PixelDelta(p) => {
