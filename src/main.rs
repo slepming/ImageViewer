@@ -6,6 +6,7 @@ use anyhow::Ok;
 use app::App;
 use log::{info, warn};
 use winit::event_loop::EventLoop;
+mod os;
 mod shaders;
 
 fn main() -> Result<(), anyhow::Error> {

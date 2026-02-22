@@ -22,7 +22,7 @@ use vulkano::{
         sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo},
         view::ImageView,
     },
-    instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions, debug},
+    instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions},
     memory::allocator::{
         AllocationCreateInfo, FreeListAllocator, GenericMemoryAllocator, MemoryTypeFilter,
         StandardMemoryAllocator,
@@ -59,6 +59,9 @@ use winit::{
 };
 
 #[cfg(target_os = "linux")]
+use crate::os::linux::host::gethostname;
+
+#[cfg(target_os = "linux")]
 use winit::platform::wayland::WindowAttributesExtWayland;
 
 pub struct App {
@@ -75,6 +78,7 @@ pub struct App {
 }
 
 pub struct AppData {
+    hostname: String,
     cube: Arc<[ImagePos; 4]>,
     zoom: f32,
 }
@@ -297,6 +301,7 @@ impl App {
             },
             current_image: image.to_string(),
             app_data: AppData {
+                hostname: gethostname(),
                 cube: Arc::new(cube),
                 zoom: 0.0,
             },
@@ -318,17 +323,17 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("Slepming Image Viewer")
-                        .with_name("viewer", "slepming viewer")
+                        .with_title(format!("{} image viewer", self.app_data.hostname))
+                        .with_name("viewer", format!("{} viewer", self.app_data.hostname))
                         .with_transparent(true)
                         .with_blur(true)
                         .with_min_inner_size(Size::Physical(PhysicalSize {
-                            height: 480,
                             width: 640,
+                            height: 480,
                         }))
                         .with_max_inner_size(Size::Physical(PhysicalSize {
-                            height: first_monitor.size().height,
                             width: first_monitor.size().width,
+                            height: first_monitor.size().height,
                         })),
                 )
                 .unwrap(),
@@ -339,14 +344,14 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("Slepming Image Viewer")
+                        .with_title("Image Viewer")
                         .with_min_inner_size(Size::Physical(PhysicalSize {
-                            height: 480,
                             width: 640,
+                            height: 480,
                         }))
                         .with_max_inner_size(Size::Physical(PhysicalSize {
-                            height: first_monitor.size().height,
                             width: first_monitor.size().width,
+                            height: first_monitor.size().height,
                         })),
                 )
                 .unwrap(),
