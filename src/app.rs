@@ -1,7 +1,10 @@
 // https://github.com/vulkano-rs/vulkano/blob/master/examples/image/main.rs
 use std::{ops::RangeInclusive, process::exit, result::Result::Ok, sync::Arc};
 
-use crate::shaders::rectangle::{frag_rect, vert_rect};
+use crate::{
+    os::window::WindowManager,
+    shaders::rectangle::{frag_rect, vert_rect},
+};
 use image::{GenericImageView, ImageReader};
 use log::{debug, error};
 use vulkano::{
@@ -50,19 +53,11 @@ use vulkano::{
 };
 use winit::{
     application::ApplicationHandler,
-    dpi::{PhysicalSize, Size},
     event::{ElementState, MouseScrollDelta, WindowEvent},
     event_loop::EventLoop,
     keyboard::{Key, NamedKey},
     platform::modifier_supplement::KeyEventExtModifierSupplement,
-    window::Window,
 };
-
-#[cfg(target_os = "linux")]
-use crate::os::linux::host::gethostname;
-
-#[cfg(target_os = "linux")]
-use winit::platform::wayland::WindowAttributesExtWayland;
 
 pub struct App {
     instance: Arc<Instance>,
@@ -78,7 +73,6 @@ pub struct App {
 }
 
 pub struct AppData {
-    hostname: String,
     cube: Arc<[ImagePos; 4]>,
     zoom: f32,
 }
@@ -90,7 +84,7 @@ pub struct MemoryApp {
 }
 
 pub struct RenderContext {
-    window: Arc<Window>,
+    wm: Arc<WindowManager>,
     swapchain: Arc<Swapchain>,
     render_pass: Arc<RenderPass>,
     framebuffers: Vec<Arc<Framebuffer>>,
@@ -301,10 +295,6 @@ impl App {
             },
             current_image: image.to_string(),
             app_data: AppData {
-                #[cfg(target_os = "linux")]
-                hostname: gethostname(),
-                #[cfg(target_os = "windows")]
-                hostname: "".to_string(),
                 cube: Arc::new(cube),
                 zoom: 0.0,
             },
@@ -317,52 +307,12 @@ impl App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let first_monitor = event_loop
-            .available_monitors()
-            .next()
-            .expect("can't get monitor");
-        #[cfg(target_os = "linux")]
-        let window = Arc::new(
-            event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_title(format!("{} image viewer", self.app_data.hostname))
-                        .with_name("viewer", format!("{} viewer", self.app_data.hostname))
-                        .with_transparent(true)
-                        .with_blur(true)
-                        .with_min_inner_size(Size::Physical(PhysicalSize {
-                            width: 640,
-                            height: 480,
-                        }))
-                        .with_max_inner_size(Size::Physical(PhysicalSize {
-                            width: first_monitor.size().width,
-                            height: first_monitor.size().height,
-                        })),
-                )
-                .unwrap(),
-        );
+        let wm = WindowManager::new(event_loop);
 
-        #[cfg(target_os = "windows")]
-        let window = Arc::new(
-            event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_title("Image Viewer")
-                        .with_min_inner_size(Size::Physical(PhysicalSize {
-                            width: 640,
-                            height: 480,
-                        }))
-                        .with_max_inner_size(Size::Physical(PhysicalSize {
-                            width: first_monitor.size().width,
-                            height: first_monitor.size().height,
-                        })),
-                )
-                .unwrap(),
-        );
+        debug!("Resolution {:?}", wm.window.inner_size());
 
-        debug!("Resolution {:?}", window.inner_size());
+        let surface = Surface::from_window(self.instance.clone(), wm.window.clone()).unwrap();
 
-        let surface = Surface::from_window(self.instance.clone(), window.clone()).unwrap();
         let (swapchain, images) = {
             let surface_capabilities = self
                 .device
@@ -381,7 +331,7 @@ impl ApplicationHandler for App {
                 SwapchainCreateInfo {
                     min_image_count: surface_capabilities.min_image_count.max(2),
                     image_format,
-                    image_extent: window.inner_size().into(),
+                    image_extent: wm.window.inner_size().into(),
                     image_usage: ImageUsage::COLOR_ATTACHMENT,
                     composite_alpha: vulkano::swapchain::CompositeAlpha::PreMultiplied,
                     ..Default::default()
@@ -455,7 +405,7 @@ impl ApplicationHandler for App {
 
         let viewport = Viewport {
             offset: [0.0, 0.0],
-            extent: window.inner_size().into(),
+            extent: wm.window.inner_size().into(),
             depth_range: RangeInclusive::new(0.0, 1.0),
         };
 
@@ -482,7 +432,7 @@ impl ApplicationHandler for App {
             render_pass,
             viewport,
             surface,
-            window,
+            wm,
             swapchain,
         });
     }
@@ -518,7 +468,7 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                let window_size = rcx.window.inner_size();
+                let window_size = rcx.wm.window.inner_size();
 
                 if window_size.width == 0 || window_size.height == 0 {
                     return;
@@ -661,7 +611,7 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                if rcx.window.inner_size() != rcx.swapchain.image_extent().into() {
+                if rcx.wm.window.inner_size() != rcx.swapchain.image_extent().into() {
                     rcx.recreate_swapchain = true;
                 }
             }
@@ -670,7 +620,7 @@ impl ApplicationHandler for App {
     }
     fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         let rcx = self.render.as_mut().unwrap();
-        rcx.window.request_redraw();
+        rcx.wm.window.request_redraw();
     }
 }
 

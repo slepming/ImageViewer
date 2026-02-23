@@ -1,14 +1,33 @@
 use std::sync::Arc;
 
+#[cfg(target_os = "linux")]
+use winit::platform::wayland::WindowAttributesExtWayland;
+
+use winit::dpi::{PhysicalSize, Size};
 use winit::{event_loop::ActiveEventLoop, monitor::MonitorHandle, window::Window};
 
+#[cfg(target_os = "linux")]
+use crate::os::linux::host::gethostname;
+
 pub struct WindowManager {
-    monitor: MonitorHandle,
-    window: Window,
+    pub monitor: MonitorHandle,
+    pub window: Arc<Window>,
+    pub hostname: Option<String>,
 }
 
 impl WindowManager {
     pub fn new(event_loop: &ActiveEventLoop) -> Arc<Self> {
+        let hostname: Option<String>;
+        #[cfg(target_os = "linux")]
+        {
+            hostname = Some(gethostname());
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            hostname = None;
+        }
+
         let monitor = event_loop
             .available_monitors()
             .next()
@@ -18,8 +37,8 @@ impl WindowManager {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title(format!("{} image viewer", self.app_data.hostname))
-                        .with_name("viewer", format!("{} viewer", self.app_data.hostname))
+                        .with_title(format!("{} image viewer", hostname.as_ref().unwrap()))
+                        .with_name("viewer", format!("{} viewer", hostname.as_ref().unwrap()))
                         .with_transparent(true)
                         .with_blur(true)
                         .with_min_inner_size(Size::Physical(PhysicalSize {
@@ -27,8 +46,8 @@ impl WindowManager {
                             height: 480,
                         }))
                         .with_max_inner_size(Size::Physical(PhysicalSize {
-                            width: first_monitor.size().width,
-                            height: first_monitor.size().height,
+                            width: monitor.size().width,
+                            height: monitor.size().height,
                         })),
                 )
                 .unwrap(),
@@ -45,12 +64,16 @@ impl WindowManager {
                             height: 480,
                         }))
                         .with_max_inner_size(Size::Physical(PhysicalSize {
-                            width: first_monitor.size().width,
-                            height: first_monitor.size().height,
+                            width: monitor.size().width,
+                            height: monitor.size().height,
                         })),
                 )
                 .unwrap(),
         );
-        Arc::new(WindowManager { monitor, window })
+        Arc::new(WindowManager {
+            monitor,
+            window,
+            hostname: hostname,
+        })
     }
 }
