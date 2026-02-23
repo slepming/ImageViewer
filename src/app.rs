@@ -301,7 +301,10 @@ impl App {
             },
             current_image: image.to_string(),
             app_data: AppData {
+                #[cfg(target_os = "linux")]
                 hostname: gethostname(),
+                #[cfg(target_os = "windows")]
+                hostname: "".to_string(),
                 cube: Arc::new(cube),
                 zoom: 0.0,
             },
@@ -507,7 +510,7 @@ impl ApplicationHandler for App {
                     self.app_data.zoom += y;
                 }
                 MouseScrollDelta::PixelDelta(p) => {
-                    self.app_data.zoom += p.y as f32;
+                    self.app_data.zoom += p.y as f32 / 10.0;
                 }
             },
             WindowEvent::CloseRequested => {
