@@ -53,7 +53,7 @@ use vulkano::{
 };
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, MouseScrollDelta, WindowEvent},
+    event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::EventLoop,
     keyboard::{Key, NamedKey},
     platform::modifier_supplement::KeyEventExtModifierSupplement,
@@ -73,8 +73,10 @@ pub struct App {
 }
 
 pub struct AppData {
+    // Why I set name for this struct is AppData?
     cube: Arc<[ImagePos; 4]>,
     zoom: f32,
+    mouse_button: Option<MouseButton>,
 }
 
 pub struct MemoryApp {
@@ -295,6 +297,7 @@ impl App {
             },
             current_image: image.to_string(),
             app_data: AppData {
+                mouse_button: None,
                 cube: Arc::new(cube),
                 zoom: 0.0,
             },
@@ -443,6 +446,7 @@ impl ApplicationHandler for App {
         event: WindowEvent,
     ) {
         let rcx = self.render.as_mut().unwrap();
+        let mut count: u64 = 0;
 
         match event {
             WindowEvent::KeyboardInput { event, .. } => {
@@ -463,6 +467,15 @@ impl ApplicationHandler for App {
                     self.app_data.zoom += p.y as f32 / 10.0;
                 }
             },
+            WindowEvent::MouseInput { state, button, .. } => {
+                if (button == MouseButton::Right || button == MouseButton::Middle)
+                    && state == ElementState::Pressed
+                {
+                    self.app_data.mouse_button = Some(button);
+                } else if state == ElementState::Released && self.app_data.mouse_button.is_some() {
+                    self.app_data.mouse_button = None;
+                }
+            }
             WindowEvent::CloseRequested => {
                 debug!("exiting..");
                 event_loop.exit();
@@ -499,6 +512,9 @@ impl ApplicationHandler for App {
                     cube,
                 )
                 .expect("error creation vertex buffer");
+
+                count += 1;
+                debug!("frame: {:?}", count);
 
                 rcx.previous_frame_end.as_mut().unwrap().cleanup_finished();
 
