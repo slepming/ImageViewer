@@ -9,9 +9,12 @@ use winit::{event_loop::ActiveEventLoop, monitor::MonitorHandle, window::Window}
 #[cfg(target_os = "linux")]
 use crate::os::linux::host::gethostname;
 
+/// WindowManager creates window base window implementations for window libraries. Current only for
+/// winit
 pub struct WindowManager {
     pub monitor: MonitorHandle,
     pub window: Arc<Window>,
+    /// Hostname is none because user use windows. In the future I fix this
     pub hostname: Option<String>,
 }
 
@@ -73,7 +76,7 @@ impl WindowManager {
         Arc::new(WindowManager {
             monitor,
             window,
-            hostname: hostname,
+            hostname,
         })
     }
 }
