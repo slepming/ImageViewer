@@ -57,6 +57,7 @@ use winit::{
     event_loop::EventLoop,
     keyboard::{Key, NamedKey},
     platform::modifier_supplement::KeyEventExtModifierSupplement,
+    raw_window_handle::HasWindowHandle,
 };
 
 pub struct App {
@@ -303,14 +304,7 @@ impl App {
             render: None,
         }
     }
-}
-
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let wm = WindowManager::new(event_loop);
-
-        debug!("Resolution {:?}", wm.window.inner_size());
-
+    fn create_backend(&mut self, wm: Arc<WindowManager>) {
         let surface = Surface::from_window(self.instance.clone(), wm.window.clone()).unwrap();
 
         let (swapchain, images) = {
@@ -436,6 +430,157 @@ impl ApplicationHandler for App {
             swapchain,
         });
     }
+    fn update(&mut self) {
+        let rcx = self.render.as_mut().unwrap();
+        let window_size = rcx.wm.window.inner_size();
+
+        if window_size.width == 0 || window_size.height == 0 {
+            return;
+        }
+
+        let cube: Vec<ImagePos> = self
+            .app_data
+            .cube
+            .clone()
+            .iter()
+            .map(|v| ImagePos {
+                position: v.position,
+                zoom: self.app_data.zoom,
+            })
+            .collect();
+
+        let vertex_buffer = Buffer::from_iter(
+            self.memory.memory_allocator.clone(),
+            BufferCreateInfo {
+                usage: BufferUsage::VERTEX_BUFFER,
+                ..Default::default()
+            },
+            AllocationCreateInfo {
+                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                ..Default::default()
+            },
+            cube,
+        )
+        .expect("error creation vertex buffer");
+
+        rcx.previous_frame_end.as_mut().unwrap().cleanup_finished();
+
+        if rcx.recreate_swapchain {
+            let (new_swapchain, new_images) = rcx
+                .swapchain
+                .recreate(SwapchainCreateInfo {
+                    image_extent: window_size.into(),
+                    ..rcx.swapchain.create_info()
+                })
+                .unwrap();
+
+            rcx.swapchain = new_swapchain;
+            rcx.framebuffers = window_size_dependent_setup(&new_images, &rcx.render_pass);
+            rcx.viewport.extent = window_size.into();
+            rcx.recreate_swapchain = false;
+            debug!(
+                "Window changed size to: {:?}; swapchain size image extent {:?}",
+                window_size,
+                rcx.swapchain.create_info().image_extent
+            )
+        }
+
+        let (image_index, suboptimal, acqure_future) =
+            match acquire_next_image(rcx.swapchain.clone(), None).map_err(Validated::unwrap) {
+                Ok(r) => r,
+                Err(VulkanError::OutOfDate) => {
+                    rcx.recreate_swapchain = true;
+                    return;
+                }
+                Err(e) => panic!("failed to acquire next image: {e}"),
+            };
+
+        if suboptimal {
+            rcx.recreate_swapchain = true;
+        }
+
+        let mut builder = AutoCommandBufferBuilder::primary(
+            self.memory.command_buffer_allocate.clone(),
+            self.queue.queue_family_index(),
+            CommandBufferUsage::OneTimeSubmit,
+        )
+        .unwrap();
+
+        builder
+            .begin_render_pass(
+                RenderPassBeginInfo {
+                    clear_values: vec![Some([0.0, 0.0, 0.0, 0.0].into())],
+                    ..RenderPassBeginInfo::framebuffer(
+                        rcx.framebuffers[image_index as usize].clone(),
+                    )
+                },
+                Default::default(),
+            )
+            .unwrap()
+            .set_viewport(0, [rcx.viewport.clone()].into_iter().collect())
+            .unwrap()
+            .bind_pipeline_graphics(rcx.pipeline.clone())
+            .unwrap()
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                rcx.pipeline.layout().clone(),
+                0,
+                rcx.descriptor_set.clone(),
+            )
+            .unwrap()
+            .bind_vertex_buffers(0, vertex_buffer.clone())
+            .unwrap();
+
+        unsafe {
+            builder
+                .draw(vertex_buffer.clone().len() as u32, 1, 0, 0)
+                .unwrap();
+        }
+
+        builder.end_render_pass(Default::default()).unwrap();
+
+        let command_buffer = builder.build().unwrap();
+        let future = rcx
+            .previous_frame_end
+            .take()
+            .unwrap()
+            .join(acqure_future)
+            .then_execute(self.queue.clone(), command_buffer)
+            .unwrap()
+            .then_swapchain_present(
+                self.queue.clone(),
+                SwapchainPresentInfo::swapchain_image_index(rcx.swapchain.clone(), image_index),
+            )
+            .then_signal_fence_and_flush();
+
+        match future.map_err(Validated::unwrap) {
+            Ok(future) => {
+                rcx.previous_frame_end = Some(future.boxed());
+            }
+            Err(VulkanError::OutOfDate) => {
+                rcx.recreate_swapchain = true;
+                rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
+            }
+            Err(e) => {
+                error!("failed to flush future: {e}");
+                rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
+            }
+        }
+
+        if rcx.wm.window.inner_size() != rcx.swapchain.image_extent().into() {
+            rcx.recreate_swapchain = true;
+        }
+    }
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let wm = WindowManager::new(event_loop);
+
+        debug!("Resolution {:?}", wm.window.inner_size());
+        self.create_backend(wm);
+    }
     fn window_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
@@ -468,152 +613,7 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                let window_size = rcx.wm.window.inner_size();
-
-                if window_size.width == 0 || window_size.height == 0 {
-                    return;
-                }
-
-                let cube: Vec<ImagePos> = self
-                    .app_data
-                    .cube
-                    .clone()
-                    .iter()
-                    .map(|v| ImagePos {
-                        position: v.position,
-                        zoom: self.app_data.zoom,
-                    })
-                    .collect();
-
-                let vertex_buffer = Buffer::from_iter(
-                    self.memory.memory_allocator.clone(),
-                    BufferCreateInfo {
-                        usage: BufferUsage::VERTEX_BUFFER,
-                        ..Default::default()
-                    },
-                    AllocationCreateInfo {
-                        memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                            | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                        ..Default::default()
-                    },
-                    cube,
-                )
-                .expect("error creation vertex buffer");
-
-                rcx.previous_frame_end.as_mut().unwrap().cleanup_finished();
-
-                if rcx.recreate_swapchain {
-                    let (new_swapchain, new_images) = rcx
-                        .swapchain
-                        .recreate(SwapchainCreateInfo {
-                            image_extent: window_size.into(),
-                            ..rcx.swapchain.create_info()
-                        })
-                        .unwrap();
-
-                    rcx.swapchain = new_swapchain;
-                    rcx.framebuffers = window_size_dependent_setup(&new_images, &rcx.render_pass);
-                    rcx.viewport.extent = window_size.into();
-                    rcx.recreate_swapchain = false;
-                    debug!(
-                        "Window changed size to: {:?}; swapchain size image extent {:?}",
-                        window_size,
-                        rcx.swapchain.create_info().image_extent
-                    )
-                }
-
-                let (image_index, suboptimal, acqure_future) = match acquire_next_image(
-                    rcx.swapchain.clone(),
-                    None,
-                )
-                .map_err(Validated::unwrap)
-                {
-                    Ok(r) => r,
-                    Err(VulkanError::OutOfDate) => {
-                        rcx.recreate_swapchain = true;
-                        return;
-                    }
-                    Err(e) => panic!("failed to acquire next image: {e}"),
-                };
-
-                if suboptimal {
-                    rcx.recreate_swapchain = true;
-                }
-
-                let mut builder = AutoCommandBufferBuilder::primary(
-                    self.memory.command_buffer_allocate.clone(),
-                    self.queue.queue_family_index(),
-                    CommandBufferUsage::OneTimeSubmit,
-                )
-                .unwrap();
-
-                builder
-                    .begin_render_pass(
-                        RenderPassBeginInfo {
-                            clear_values: vec![Some([0.0, 0.0, 0.0, 0.0].into())],
-                            ..RenderPassBeginInfo::framebuffer(
-                                rcx.framebuffers[image_index as usize].clone(),
-                            )
-                        },
-                        Default::default(),
-                    )
-                    .unwrap()
-                    .set_viewport(0, [rcx.viewport.clone()].into_iter().collect())
-                    .unwrap()
-                    .bind_pipeline_graphics(rcx.pipeline.clone())
-                    .unwrap()
-                    .bind_descriptor_sets(
-                        PipelineBindPoint::Graphics,
-                        rcx.pipeline.layout().clone(),
-                        0,
-                        rcx.descriptor_set.clone(),
-                    )
-                    .unwrap()
-                    .bind_vertex_buffers(0, vertex_buffer.clone())
-                    .unwrap();
-
-                unsafe {
-                    builder
-                        .draw(vertex_buffer.clone().len() as u32, 1, 0, 0)
-                        .unwrap();
-                }
-
-                builder.end_render_pass(Default::default()).unwrap();
-
-                let command_buffer = builder.build().unwrap();
-                let future = rcx
-                    .previous_frame_end
-                    .take()
-                    .unwrap()
-                    .join(acqure_future)
-                    .then_execute(self.queue.clone(), command_buffer)
-                    .unwrap()
-                    .then_swapchain_present(
-                        self.queue.clone(),
-                        SwapchainPresentInfo::swapchain_image_index(
-                            rcx.swapchain.clone(),
-                            image_index,
-                        ),
-                    )
-                    .then_signal_fence_and_flush();
-
-                match future.map_err(Validated::unwrap) {
-                    Ok(future) => {
-                        rcx.previous_frame_end = Some(future.boxed());
-                    }
-                    Err(VulkanError::OutOfDate) => {
-                        rcx.recreate_swapchain = true;
-                        rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
-                    }
-                    Err(e) => {
-                        error!("failed to flush future: {e}");
-                        rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
-                    }
-                }
-
-                if rcx.wm.window.inner_size() != rcx.swapchain.image_extent().into() {
-                    rcx.recreate_swapchain = true;
-                }
+                self.update();
             }
             _ => (),
         }

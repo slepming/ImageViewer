@@ -1,10 +1,10 @@
-mod app;
+mod window;
 
 use std::{env, process::exit};
 
 use anyhow::Ok;
-use app::App;
 use log::{info, warn};
+use window::App;
 use winit::event_loop::EventLoop;
 mod os;
 mod shaders;

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use winit::platform::wayland::WindowAttributesExtWayland;
 
 use winit::dpi::{PhysicalSize, Size};
+use winit::raw_window_handle::HasWindowHandle;
 use winit::{event_loop::ActiveEventLoop, monitor::MonitorHandle, window::Window};
 
 #[cfg(target_os = "linux")]
@@ -32,6 +33,7 @@ impl WindowManager {
             .available_monitors()
             .next()
             .expect("can't get monitor");
+
         #[cfg(target_os = "linux")]
         let window = Arc::new(
             event_loop
