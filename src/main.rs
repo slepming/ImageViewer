@@ -6,20 +6,30 @@ use anyhow::Ok;
 use log::{info, warn};
 use window::App;
 use winit::event_loop::EventLoop;
+
+use crate::os::window::WindowManager;
+use log::debug;
 mod os;
 mod shaders;
 
+#[cfg(feature = "winit")]
 fn main() -> Result<(), anyhow::Error> {
+    use crate::os::window::WinitBackend;
+
     pretty_env_logger::init_timed();
-    let args: Vec<String> = env::args().collect();
+
+    let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        warn!("app haven't argument path to image. Please, set up argument path");
-        exit(-1);
+        warn!("No image path provided");
+        exit(1);
     }
-    info!("{}", args[1]);
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
-    let mut app = App::new(&args[1], &event_loop);
-    event_loop.run_app(&mut app)?;
+
+    let image_path = &args[1];
+
+    let mut backend: WinitBackend = WinitBackend::init();
+    let window = backend.create_window();
+
+    let mut app = App::new(image_path, backend.event_loop);
+
     Ok(())
 }

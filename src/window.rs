@@ -99,7 +99,7 @@ pub struct RenderContext {
 }
 
 impl App {
-    pub fn new(image: &str, e: &EventLoop<()>) -> App {
+    pub fn new(image: &str, e: &impl HasDisplayHandle) -> App {
         let library = VulkanLibrary::new().expect("no local Vulkan library/dll");
         let required_extensions = Surface::required_extensions(&e).unwrap();
         #[cfg(target_os = "linux")]
@@ -304,8 +304,9 @@ impl App {
             render: None,
         }
     }
-    fn create_backend(&mut self, wm: Arc<WindowManager>) {
-        let surface = Surface::from_window(self.instance.clone(), wm.window.clone()).unwrap();
+
+    fn create_render_context(&mut self, wm: Arc<WindowManager>) {
+        let surface = Surface::from_window(self.instance.clone(), wm.field3.clone()).unwrap();
 
         let (swapchain, images) = {
             let surface_capabilities = self
@@ -325,7 +326,7 @@ impl App {
                 SwapchainCreateInfo {
                     min_image_count: surface_capabilities.min_image_count.max(2),
                     image_format,
-                    image_extent: wm.window.inner_size().into(),
+                    image_extent: wm.field3.inner_size().into(),
                     image_usage: ImageUsage::COLOR_ATTACHMENT,
                     composite_alpha: vulkano::swapchain::CompositeAlpha::PreMultiplied,
                     ..Default::default()
@@ -399,7 +400,7 @@ impl App {
 
         let viewport = Viewport {
             offset: [0.0, 0.0],
-            extent: wm.window.inner_size().into(),
+            extent: wm.field3.inner_size().into(),
             depth_range: RangeInclusive::new(0.0, 1.0),
         };
 
@@ -432,7 +433,7 @@ impl App {
     }
     fn update(&mut self) {
         let rcx = self.render.as_mut().unwrap();
-        let window_size = rcx.wm.window.inner_size();
+        let window_size = rcx.wm.field3.inner_size();
 
         if window_size.width == 0 || window_size.height == 0 {
             return;
@@ -568,7 +569,7 @@ impl App {
             }
         }
 
-        if rcx.wm.window.inner_size() != rcx.swapchain.image_extent().into() {
+        if rcx.wm.field3.inner_size() != rcx.swapchain.image_extent().into() {
             rcx.recreate_swapchain = true;
         }
     }
@@ -578,8 +579,8 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         let wm = WindowManager::new(event_loop);
 
-        debug!("Resolution {:?}", wm.window.inner_size());
-        self.create_backend(wm);
+        debug!("Resolution {:?}", wm.2.inner_size());
+        self.create_render_context(wm);
     }
     fn window_event(
         &mut self,
@@ -620,7 +621,7 @@ impl ApplicationHandler for App {
     }
     fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         let rcx = self.render.as_mut().unwrap();
-        rcx.wm.window.request_redraw();
+        rcx.wm.field3.request_redraw();
     }
 }
 
