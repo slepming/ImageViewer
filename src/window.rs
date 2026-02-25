@@ -2,7 +2,7 @@
 use std::{ops::RangeInclusive, process::exit, result::Result::Ok, sync::Arc};
 
 use crate::{
-    os::window::WindowManager,
+    os::manager::WindowManager,
     shaders::rectangle::{frag_rect, vert_rect},
 };
 use image::{GenericImageView, ImageReader};

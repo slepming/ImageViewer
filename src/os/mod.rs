@@ -1,2 +1,2 @@
 pub mod linux;
-pub mod window;
+pub mod manager;
