@@ -4,7 +4,6 @@ use std::sync::Arc;
 use winit::platform::wayland::WindowAttributesExtWayland;
 
 use winit::dpi::{PhysicalSize, Size};
-use winit::raw_window_handle::HasWindowHandle;
 use winit::{event_loop::ActiveEventLoop, monitor::MonitorHandle, window::Window};
 
 #[cfg(target_os = "linux")]

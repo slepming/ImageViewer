@@ -1,5 +1,7 @@
 // https://github.com/vulkano-rs/vulkano/blob/master/examples/image/main.rs
-use std::{ops::RangeInclusive, process::exit, result::Result::Ok, sync::Arc};
+use std::{
+    ops::RangeInclusive, process::exit, result::Result::Ok, sync::Arc, thread, time::Duration,
+};
 
 use crate::{
     os::manager::WindowManager,
@@ -57,7 +59,6 @@ use winit::{
     event_loop::EventLoop,
     keyboard::{Key, NamedKey},
     platform::modifier_supplement::KeyEventExtModifierSupplement,
-    raw_window_handle::HasWindowHandle,
 };
 
 pub struct App {
@@ -422,7 +423,7 @@ impl App {
             descriptor_set,
             framebuffers,
             pipeline,
-            recreate_swapchain: false,
+            recreate_swapchain: true,
             render_pass,
             viewport,
             surface,
@@ -483,88 +484,88 @@ impl App {
                 "Window changed size to: {:?}; swapchain size image extent {:?}",
                 window_size,
                 rcx.swapchain.create_info().image_extent
+            );
+
+            let (image_index, suboptimal, acqure_future) =
+                match acquire_next_image(rcx.swapchain.clone(), None).map_err(Validated::unwrap) {
+                    Ok(r) => r,
+                    Err(VulkanError::OutOfDate) => {
+                        rcx.recreate_swapchain = true;
+                        return;
+                    }
+                    Err(e) => panic!("failed to acquire next image: {e}"),
+                };
+
+            if suboptimal {
+                rcx.recreate_swapchain = true;
+            }
+
+            let mut builder = AutoCommandBufferBuilder::primary(
+                self.memory.command_buffer_allocate.clone(),
+                self.queue.queue_family_index(),
+                CommandBufferUsage::OneTimeSubmit,
             )
-        }
-
-        let (image_index, suboptimal, acqure_future) =
-            match acquire_next_image(rcx.swapchain.clone(), None).map_err(Validated::unwrap) {
-                Ok(r) => r,
-                Err(VulkanError::OutOfDate) => {
-                    rcx.recreate_swapchain = true;
-                    return;
-                }
-                Err(e) => panic!("failed to acquire next image: {e}"),
-            };
-
-        if suboptimal {
-            rcx.recreate_swapchain = true;
-        }
-
-        let mut builder = AutoCommandBufferBuilder::primary(
-            self.memory.command_buffer_allocate.clone(),
-            self.queue.queue_family_index(),
-            CommandBufferUsage::OneTimeSubmit,
-        )
-        .unwrap();
-
-        builder
-            .begin_render_pass(
-                RenderPassBeginInfo {
-                    clear_values: vec![Some([0.0, 0.0, 0.0, 0.0].into())],
-                    ..RenderPassBeginInfo::framebuffer(
-                        rcx.framebuffers[image_index as usize].clone(),
-                    )
-                },
-                Default::default(),
-            )
-            .unwrap()
-            .set_viewport(0, [rcx.viewport.clone()].into_iter().collect())
-            .unwrap()
-            .bind_pipeline_graphics(rcx.pipeline.clone())
-            .unwrap()
-            .bind_descriptor_sets(
-                PipelineBindPoint::Graphics,
-                rcx.pipeline.layout().clone(),
-                0,
-                rcx.descriptor_set.clone(),
-            )
-            .unwrap()
-            .bind_vertex_buffers(0, vertex_buffer.clone())
             .unwrap();
 
-        unsafe {
             builder
-                .draw(vertex_buffer.clone().len() as u32, 1, 0, 0)
+                .begin_render_pass(
+                    RenderPassBeginInfo {
+                        clear_values: vec![Some([0.0, 0.0, 0.0, 0.0].into())],
+                        ..RenderPassBeginInfo::framebuffer(
+                            rcx.framebuffers[image_index as usize].clone(),
+                        )
+                    },
+                    Default::default(),
+                )
+                .unwrap()
+                .set_viewport(0, [rcx.viewport.clone()].into_iter().collect())
+                .unwrap()
+                .bind_pipeline_graphics(rcx.pipeline.clone())
+                .unwrap()
+                .bind_descriptor_sets(
+                    PipelineBindPoint::Graphics,
+                    rcx.pipeline.layout().clone(),
+                    0,
+                    rcx.descriptor_set.clone(),
+                )
+                .unwrap()
+                .bind_vertex_buffers(0, vertex_buffer.clone())
                 .unwrap();
-        }
 
-        builder.end_render_pass(Default::default()).unwrap();
-
-        let command_buffer = builder.build().unwrap();
-        let future = rcx
-            .previous_frame_end
-            .take()
-            .unwrap()
-            .join(acqure_future)
-            .then_execute(self.queue.clone(), command_buffer)
-            .unwrap()
-            .then_swapchain_present(
-                self.queue.clone(),
-                SwapchainPresentInfo::swapchain_image_index(rcx.swapchain.clone(), image_index),
-            )
-            .then_signal_fence_and_flush();
-
-        match future.map_err(Validated::unwrap) {
-            Ok(future) => {
-                rcx.previous_frame_end = Some(future.boxed());
+            unsafe {
+                builder
+                    .draw(vertex_buffer.clone().len() as u32, 1, 0, 0)
+                    .unwrap();
             }
-            Err(VulkanError::OutOfDate) => {
-                rcx.recreate_swapchain = true;
-                rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
-            }
-            Err(e) => {
-                error!("failed to flush future: {e}");
-                rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
+
+            builder.end_render_pass(Default::default()).unwrap();
+
+            let command_buffer = builder.build().unwrap();
+            let future = rcx
+                .previous_frame_end
+                .take()
+                .unwrap()
+                .join(acqure_future)
+                .then_execute(self.queue.clone(), command_buffer)
+                .unwrap()
+                .then_swapchain_present(
+                    self.queue.clone(),
+                    SwapchainPresentInfo::swapchain_image_index(rcx.swapchain.clone(), image_index),
+                )
+                .then_signal_fence_and_flush();
+
+            match future.map_err(Validated::unwrap) {
+                Ok(future) => {
+                    rcx.previous_frame_end = Some(future.boxed());
+                }
+                Err(VulkanError::OutOfDate) => {
+                    rcx.recreate_swapchain = true;
+                    rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
+                }
+                Err(e) => {
+                    error!("failed to flush future: {e}");
+                    rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
+                }
             }
         }
 
@@ -587,8 +588,6 @@ impl ApplicationHandler for App {
         _window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        let rcx = self.render.as_mut().unwrap();
-
         match event {
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed && !event.repeat {
@@ -614,6 +613,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 self.update();
+                thread::sleep(Duration::from_micros(1000 / 60));
             }
             _ => (),
         }
