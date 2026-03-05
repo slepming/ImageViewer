@@ -29,6 +29,7 @@ project_building() {
   read -p "n-r/n-d/c?(default run) " version
   if [ "$version" = "n-r" ]; then
     cargo build --release
+    ./target/release/vulkan_zero $path_to_image
   elif [ "$version" = "c" ]; then
     cargo clean
   elif [ "$version" = "n-d" ]; then

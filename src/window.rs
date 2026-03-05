@@ -604,7 +604,7 @@ impl ApplicationHandler for App {
                     self.app_data.zoom += y;
                 }
                 MouseScrollDelta::PixelDelta(p) => {
-                    self.app_data.zoom += p.y as f32 / 10.0;
+                    self.app_data.zoom += p.y as f32 / 10.0; // Delta very high for zooming and for this we divide delta / 10
                 }
             },
             WindowEvent::CloseRequested => {
@@ -613,7 +613,6 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 self.update();
-                thread::sleep(Duration::from_micros(1000 / 60));
             }
             _ => (),
         }
