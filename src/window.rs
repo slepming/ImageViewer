@@ -438,36 +438,35 @@ impl App {
         if window_size.width == 0 || window_size.height == 0 {
             return;
         }
-
-        let cube: Vec<ImagePos> = self
-            .app_data
-            .cube
-            .clone()
-            .iter()
-            .map(|v| ImagePos {
-                position: v.position,
-                zoom: self.app_data.zoom,
-            })
-            .collect();
-
-        let vertex_buffer = Buffer::from_iter(
-            self.memory.memory_allocator.clone(),
-            BufferCreateInfo {
-                usage: BufferUsage::VERTEX_BUFFER,
-                ..Default::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..Default::default()
-            },
-            cube,
-        )
-        .expect("error creation vertex buffer");
-
-        rcx.previous_frame_end.as_mut().unwrap().cleanup_finished();
-
         if rcx.recreate_swapchain {
+            let cube: Vec<ImagePos> = self
+                .app_data
+                .cube
+                .clone()
+                .iter()
+                .map(|v| ImagePos {
+                    position: v.position,
+                    zoom: self.app_data.zoom,
+                })
+                .collect();
+
+            let vertex_buffer = Buffer::from_iter(
+                self.memory.memory_allocator.clone(),
+                BufferCreateInfo {
+                    usage: BufferUsage::VERTEX_BUFFER,
+                    ..Default::default()
+                },
+                AllocationCreateInfo {
+                    memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                        | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                    ..Default::default()
+                },
+                cube,
+            )
+            .expect("error creation vertex buffer");
+
+            rcx.previous_frame_end.as_mut().unwrap().cleanup_finished();
+
             let (new_swapchain, new_images) = rcx
                 .swapchain
                 .recreate(SwapchainCreateInfo {
