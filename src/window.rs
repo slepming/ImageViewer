@@ -615,6 +615,7 @@ impl ApplicationHandler for App {
             }
             _ => (),
         }
+        thread::sleep(Duration::from_millis(1000 / 60));
     }
     fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         let rcx = self.render.as_mut().unwrap();
