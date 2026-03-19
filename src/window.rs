@@ -76,13 +76,14 @@ pub struct App {
 
 pub struct AppData {
     cube: Arc<[ImagePos; 4]>,
-    zoom: f32,
+    zoom: Zoom,
 }
 
 pub struct MemoryApp {
     memory_allocator: Arc<GenericMemoryAllocator<FreeListAllocator>>,
     command_buffer_allocate: Arc<StandardCommandBufferAllocator>,
     descriptor_allocator: Arc<StandardDescriptorSetAllocator>,
+    vertex_buffer: Subbuffer<[ImagePos]>,
 }
 
 pub struct RenderContext {
@@ -194,19 +195,15 @@ impl App {
         let cube = [
             ImagePos {
                 position: [-1.0, -1.0],
-                zoom: 0.0,
             },
             ImagePos {
                 position: [-1.0, 1.0],
-                zoom: 0.0,
             },
             ImagePos {
                 position: [1.0, -1.0],
-                zoom: 0.0,
             },
             ImagePos {
                 position: [1.0, 1.0],
-                zoom: 0.0,
             },
         ];
 
@@ -286,6 +283,21 @@ impl App {
             device.physical_device().display_properties().unwrap()
         );
 
+        let vertex_buffer = Buffer::from_iter(
+            memory_allocator.clone(),
+            BufferCreateInfo {
+                usage: BufferUsage::VERTEX_BUFFER,
+                ..Default::default()
+            },
+            AllocationCreateInfo {
+                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                ..Default::default()
+            },
+            cube,
+        )
+        .expect("error creation vertex buffer");
+
         App {
             instance,
             device,
@@ -294,11 +306,12 @@ impl App {
                 memory_allocator,
                 command_buffer_allocate,
                 descriptor_allocator: descriptor_set_allocator,
+                vertex_buffer,
             },
             current_image: image.to_string(),
             app_data: AppData {
                 cube: Arc::new(cube),
-                zoom: 0.0,
+                zoom: Zoom { zoom: 0.0 },
             },
             sampler,
             texture,
@@ -439,32 +452,6 @@ impl App {
             return;
         }
         if rcx.recreate_swapchain {
-            let cube: Vec<ImagePos> = self
-                .app_data
-                .cube
-                .clone()
-                .iter()
-                .map(|v| ImagePos {
-                    position: v.position,
-                    zoom: self.app_data.zoom,
-                })
-                .collect();
-
-            let vertex_buffer = Buffer::from_iter(
-                self.memory.memory_allocator.clone(),
-                BufferCreateInfo {
-                    usage: BufferUsage::VERTEX_BUFFER,
-                    ..Default::default()
-                },
-                AllocationCreateInfo {
-                    memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                        | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                    ..Default::default()
-                },
-                cube,
-            )
-            .expect("error creation vertex buffer");
-
             rcx.previous_frame_end.as_mut().unwrap().cleanup_finished();
 
             let (new_swapchain, new_images) = rcx
@@ -484,87 +471,91 @@ impl App {
                 window_size,
                 rcx.swapchain.create_info().image_extent
             );
+        }
 
-            let (image_index, suboptimal, acqure_future) =
-                match acquire_next_image(rcx.swapchain.clone(), None).map_err(Validated::unwrap) {
-                    Ok(r) => r,
-                    Err(VulkanError::OutOfDate) => {
-                        rcx.recreate_swapchain = true;
-                        return;
-                    }
-                    Err(e) => panic!("failed to acquire next image: {e}"),
-                };
-
-            if suboptimal {
-                rcx.recreate_swapchain = true;
-            }
-
-            let mut builder = AutoCommandBufferBuilder::primary(
-                self.memory.command_buffer_allocate.clone(),
-                self.queue.queue_family_index(),
-                CommandBufferUsage::OneTimeSubmit,
-            )
-            .unwrap();
-
-            builder
-                .begin_render_pass(
-                    RenderPassBeginInfo {
-                        clear_values: vec![Some([0.0, 0.0, 0.0, 0.0].into())],
-                        ..RenderPassBeginInfo::framebuffer(
-                            rcx.framebuffers[image_index as usize].clone(),
-                        )
-                    },
-                    Default::default(),
-                )
-                .unwrap()
-                .set_viewport(0, [rcx.viewport.clone()].into_iter().collect())
-                .unwrap()
-                .bind_pipeline_graphics(rcx.pipeline.clone())
-                .unwrap()
-                .bind_descriptor_sets(
-                    PipelineBindPoint::Graphics,
-                    rcx.pipeline.layout().clone(),
-                    0,
-                    rcx.descriptor_set.clone(),
-                )
-                .unwrap()
-                .bind_vertex_buffers(0, vertex_buffer.clone())
-                .unwrap();
-
-            unsafe {
-                builder
-                    .draw(vertex_buffer.clone().len() as u32, 1, 0, 0)
-                    .unwrap();
-            }
-
-            builder.end_render_pass(Default::default()).unwrap();
-
-            let command_buffer = builder.build().unwrap();
-            let future = rcx
-                .previous_frame_end
-                .take()
-                .unwrap()
-                .join(acqure_future)
-                .then_execute(self.queue.clone(), command_buffer)
-                .unwrap()
-                .then_swapchain_present(
-                    self.queue.clone(),
-                    SwapchainPresentInfo::swapchain_image_index(rcx.swapchain.clone(), image_index),
-                )
-                .then_signal_fence_and_flush();
-
-            match future.map_err(Validated::unwrap) {
-                Ok(future) => {
-                    rcx.previous_frame_end = Some(future.boxed());
-                }
+        let (image_index, suboptimal, acqure_future) =
+            match acquire_next_image(rcx.swapchain.clone(), None).map_err(Validated::unwrap) {
+                Ok(r) => r,
                 Err(VulkanError::OutOfDate) => {
                     rcx.recreate_swapchain = true;
-                    rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
+                    return;
                 }
-                Err(e) => {
-                    error!("failed to flush future: {e}");
-                    rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
-                }
+                Err(e) => panic!("failed to acquire next image: {e}"),
+            };
+
+        // BUG: Memory leak(VRAM, RAM)
+
+        if suboptimal {
+            rcx.recreate_swapchain = true;
+        }
+
+        let mut builder = AutoCommandBufferBuilder::primary(
+            self.memory.command_buffer_allocate.clone(),
+            self.queue.queue_family_index(),
+            CommandBufferUsage::OneTimeSubmit,
+        )
+        .unwrap();
+
+        builder
+            .push_constants(rcx.pipeline.layout().clone(), 0, self.app_data.zoom)
+            .unwrap()
+            .begin_render_pass(
+                RenderPassBeginInfo {
+                    clear_values: vec![Some([0.0, 0.0, 0.0, 0.0].into())],
+                    ..RenderPassBeginInfo::framebuffer(
+                        rcx.framebuffers[image_index as usize].clone(),
+                    )
+                },
+                Default::default(),
+            )
+            .unwrap()
+            .set_viewport(0, [rcx.viewport.clone()].into_iter().collect())
+            .unwrap()
+            .bind_pipeline_graphics(rcx.pipeline.clone())
+            .unwrap()
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                rcx.pipeline.layout().clone(),
+                0,
+                rcx.descriptor_set.clone(),
+            )
+            .unwrap()
+            .bind_vertex_buffers(0, self.memory.vertex_buffer.clone())
+            .unwrap();
+
+        unsafe {
+            builder
+                .draw(self.memory.vertex_buffer.clone().len() as u32, 1, 0, 0)
+                .unwrap();
+        }
+
+        builder.end_render_pass(Default::default()).unwrap();
+
+        let command_buffer = builder.build().unwrap();
+        let future = rcx
+            .previous_frame_end
+            .take()
+            .unwrap()
+            .join(acqure_future)
+            .then_execute(self.queue.clone(), command_buffer)
+            .unwrap()
+            .then_swapchain_present(
+                self.queue.clone(),
+                SwapchainPresentInfo::swapchain_image_index(rcx.swapchain.clone(), image_index),
+            )
+            .then_signal_fence_and_flush();
+
+        match future.map_err(Validated::unwrap) {
+            Ok(future) => {
+                rcx.previous_frame_end = Some(future.boxed());
+            }
+            Err(VulkanError::OutOfDate) => {
+                rcx.recreate_swapchain = true;
+                rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
+            }
+            Err(e) => {
+                error!("failed to flush future: {e}");
+                rcx.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
             }
         }
 
@@ -592,7 +583,7 @@ impl ApplicationHandler for App {
                 if event.state == ElementState::Pressed && !event.repeat {
                     match event.key_without_modifiers().as_ref() {
                         Key::Named(NamedKey::Escape) => {
-                            exit(0);
+                            event_loop.exit();
                         }
                         _ => {}
                     }
@@ -600,10 +591,10 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseWheel { delta, .. } => match delta {
                 MouseScrollDelta::LineDelta(.., y) => {
-                    self.app_data.zoom += y;
+                    self.app_data.zoom.zoom += y;
                 }
                 MouseScrollDelta::PixelDelta(p) => {
-                    self.app_data.zoom += p.y as f32 / 10.0; // Delta very high for zooming and for this we divide delta / 10
+                    self.app_data.zoom.zoom += p.y as f32 / 10.0; // Delta very high for zooming and for this we divide delta / 10
                 }
             },
             WindowEvent::CloseRequested => {
@@ -628,7 +619,12 @@ impl ApplicationHandler for App {
 pub struct ImagePos {
     #[format(R32G32_SFLOAT)]
     position: [f32; 2],
-    #[format(R32_SFLOAT)]
+}
+
+#[derive(BufferContents, Vertex, Clone, Copy, Debug)]
+#[repr(C)]
+pub struct Zoom {
+    #[format(R32G32_SFLOAT)]
     zoom: f32,
 }
 
