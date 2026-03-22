@@ -3,6 +3,7 @@ use std::{env, process::exit};
 
 use anyhow::Ok;
 use log::{info, warn};
+use tracy_client::Client;
 use window::App;
 use winit::event_loop::EventLoop;
 mod os;

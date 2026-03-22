@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use log::info;
 #[cfg(target_os = "linux")]
 use winit::platform::wayland::WindowAttributesExtWayland;
 
@@ -16,7 +17,7 @@ pub struct WindowManager {
 }
 
 impl WindowManager {
-    pub fn new(event_loop: &ActiveEventLoop) -> Arc<Self> {
+    pub fn new(event_loop: &ActiveEventLoop, image_name: String) -> Arc<Self> {
         let hostname: Option<String>;
         #[cfg(target_os = "linux")]
         {
@@ -38,7 +39,7 @@ impl WindowManager {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title(format!("{} image viewer", hostname.as_ref().unwrap()))
+                        .with_title(format!("{}: {}", hostname.as_ref().unwrap(), image_name))
                         .with_name("viewer", format!("{} viewer", hostname.as_ref().unwrap()))
                         .with_transparent(true)
                         .with_blur(true)
@@ -71,6 +72,8 @@ impl WindowManager {
                 )
                 .unwrap(),
         );
+
+        info!("app started with name: {}", window.title());
         Arc::new(WindowManager {
             monitor,
             window,

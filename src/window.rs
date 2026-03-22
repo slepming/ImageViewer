@@ -9,6 +9,7 @@ use crate::{
 };
 use image::{GenericImageView, ImageReader};
 use log::{debug, error};
+use tracy_client::{Client, GpuContext};
 use vulkano::{
     DeviceSize, Validated, VulkanError, VulkanLibrary,
     buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer},
@@ -68,18 +69,23 @@ pub struct App {
     memory: MemoryApp,
     texture: Arc<ImageView>,
     sampler: Arc<Sampler>,
-    #[allow(dead_code)]
-    current_image: String,
-    app_data: AppData,
+    current_image: String, // Currently image is always first started image
+    app_data: ImageData,
     render: Option<RenderContext>,
+    tracy: Option<TracyContext>,
 }
 
-pub struct AppData {
-    cube: Arc<[ImagePos; 4]>,
+pub struct TracyContext {
+    client: Arc<Client>,
+    gpu_context: Arc<GpuContext>,
+}
+
+pub struct ImageData {
     zoom: Zoom,
 }
 
 pub struct MemoryApp {
+    #[allow(dead_code)]
     memory_allocator: Arc<GenericMemoryAllocator<FreeListAllocator>>,
     command_buffer_allocate: Arc<StandardCommandBufferAllocator>,
     descriptor_allocator: Arc<StandardDescriptorSetAllocator>,
@@ -298,6 +304,23 @@ impl App {
         )
         .expect("error creation vertex buffer");
 
+        let mut tracy: Option<TracyContext> = None;
+
+        if let Some(tracy_client) = Client::running() {
+            let gpu_context = tracy_client
+                .new_gpu_context(
+                    Some("Hello"),
+                    tracy_client::GpuContextType::Vulkan,
+                    0,
+                    1_000_000_000.0,
+                )
+                .unwrap();
+            tracy = Some(TracyContext {
+                client: Arc::new(Client::running().unwrap()),
+                gpu_context: Arc::new(gpu_context),
+            })
+        }
+
         App {
             instance,
             device,
@@ -309,13 +332,13 @@ impl App {
                 vertex_buffer,
             },
             current_image: image.to_string(),
-            app_data: AppData {
-                cube: Arc::new(cube),
+            app_data: ImageData {
                 zoom: Zoom { zoom: 0.0 },
             },
             sampler,
             texture,
             render: None,
+            tracy,
         }
     }
     fn create_backend(&mut self, wm: Arc<WindowManager>) {
@@ -483,8 +506,6 @@ impl App {
                 Err(e) => panic!("failed to acquire next image: {e}"),
             };
 
-        // BUG: Memory leak(VRAM, RAM)
-
         if suboptimal {
             rcx.recreate_swapchain = true;
         }
@@ -567,7 +588,7 @@ impl App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let wm = WindowManager::new(event_loop);
+        let wm = WindowManager::new(event_loop, self.current_image.clone());
 
         debug!("Resolution {:?}", wm.window.inner_size());
         self.create_backend(wm);
@@ -603,10 +624,14 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 self.update();
+                self.tracy
+                    .as_ref()
+                    .expect("tracy must be running")
+                    .client
+                    .frame_mark();
             }
             _ => (),
         }
-        thread::sleep(Duration::from_millis(1000 / 60));
     }
     fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         let rcx = self.render.as_mut().unwrap();
