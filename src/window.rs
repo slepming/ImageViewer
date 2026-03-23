@@ -108,79 +108,27 @@ pub struct RenderContext {
     previous_frame_end: Option<Box<dyn GpuFuture>>,
 }
 
+trait Initialization {
+    fn create_instance(
+        library: Arc<VulkanLibrary>,
+        required_extensions: InstanceExtensions,
+    ) -> Result<Arc<Instance>, Validated<VulkanError>>;
+    fn create_device(
+        instance: Arc<Instance>,
+    ) -> Result<(Arc<Device>, impl ExactSizeIterator<Item = Arc<Queue>>), Validated<VulkanError>>;
+}
+
 impl App {
     pub fn new(image: &str, e: &EventLoop<()>) -> App {
+        let span = tracy_client::span!("App::new");
+        span.emit_color(0xff0000);
         let library = VulkanLibrary::new().expect("no local Vulkan library/dll");
         let required_extensions = Surface::required_extensions(&e).unwrap();
-        #[cfg(target_os = "linux")]
-        let instance = Instance::new(
-            library,
-            InstanceCreateInfo {
-                flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
-                enabled_extensions: InstanceExtensions {
-                    khr_wayland_surface: true,
-                    khr_display: true,
-                    ext_swapchain_colorspace: true,
-                    ..required_extensions
-                },
-                ..Default::default()
-            },
-        )
-        .expect("failed to create instance");
-        #[cfg(target_os = "windows")]
-        let instance = Instance::new(
-            library,
-            InstanceCreateInfo {
-                flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
-                enabled_extensions: InstanceExtensions {
-                    khr_win32_surface: true,
-                    ..required_extensions
-                },
-                ..Default::default()
-            },
-        )
-        .expect("failed to create instance");
+        let instance =
+            App::create_instance(library, required_extensions).expect("failed to create instance");
 
-        let physical_device = instance
-            .enumerate_physical_devices()
-            .expect("could not enumerate physical devices")
-            .next()
-            .expect("No Device available");
-
-        for family in physical_device.queue_family_properties() {
-            debug!(
-                "Found a queue family with {:?} queue(s) flags {:?}",
-                family.queue_count, family.queue_flags
-            );
-        }
-
-        let queue_family_index = physical_device
-            .queue_family_properties()
-            .iter()
-            .enumerate()
-            .position(|(_, queue_family_properties)| {
-                queue_family_properties
-                    .queue_flags
-                    .contains(QueueFlags::GRAPHICS)
-            })
-            .expect("Couldn't find a graphical queue family")
-            as u32;
-
-        let (device, mut queues) = Device::new(
-            physical_device,
-            DeviceCreateInfo {
-                enabled_extensions: DeviceExtensions {
-                    khr_swapchain: true,
-                    ..Default::default()
-                },
-                queue_create_infos: vec![QueueCreateInfo {
-                    queue_family_index,
-                    ..Default::default()
-                }],
-                ..Default::default()
-            },
-        )
-        .expect("failed to create device");
+        let (device, mut queues) =
+            App::create_device(instance.clone()).expect("failed to create device");
 
         let queue = queues.next().unwrap(); // Because I have graphic queue family with one queue
 
@@ -343,6 +291,7 @@ impl App {
             tracy,
         }
     }
+
     fn create_backend(&mut self, wm: Arc<WindowManager>) {
         let span = tracy_client::span!("App::create_backend");
         span.emit_color(0xffffff);
@@ -551,8 +500,6 @@ impl App {
         let rcx = self.render.as_mut().unwrap();
         let window_size = rcx.wm.window.inner_size();
 
-        rcx.previous_frame_end.as_mut().unwrap().cleanup_finished();
-
         if window_size.width == 0 || window_size.height == 0 {
             return;
         }
@@ -581,6 +528,8 @@ impl App {
             rcx,
             image_index,
         );
+
+        rcx.previous_frame_end.as_mut().unwrap().cleanup_finished();
 
         let future = rcx
             .previous_frame_end
@@ -611,6 +560,91 @@ impl App {
 
         if rcx.wm.window.inner_size() != rcx.swapchain.image_extent().into() {
             rcx.recreate_swapchain = true;
+        }
+    }
+}
+
+impl Initialization for App {
+    fn create_device(
+        instance: Arc<Instance>,
+    ) -> Result<(Arc<Device>, impl ExactSizeIterator<Item = Arc<Queue>>), Validated<VulkanError>>
+    {
+        let span = tracy_client::span!("App::create_device");
+        let physical_device = instance
+            .enumerate_physical_devices()
+            .expect("could not enumerate physical devices")
+            .next()
+            .expect("No Device available");
+
+        for family in physical_device.queue_family_properties() {
+            debug!(
+                "Found a queue family with {:?} queue(s) flags {:?}",
+                family.queue_count, family.queue_flags
+            );
+        }
+
+        let queue_family_index = physical_device
+            .queue_family_properties()
+            .iter()
+            .enumerate()
+            .position(|(_, queue_family_properties)| {
+                queue_family_properties
+                    .queue_flags
+                    .contains(QueueFlags::GRAPHICS)
+            })
+            .expect("Couldn't find a graphical queue family")
+            as u32;
+
+        Device::new(
+            //
+            physical_device,
+            DeviceCreateInfo {
+                enabled_extensions: DeviceExtensions {
+                    khr_swapchain: true,
+                    ..Default::default()
+                },
+                queue_create_infos: vec![QueueCreateInfo {
+                    queue_family_index,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+    }
+    fn create_instance(
+        library: Arc<VulkanLibrary>,
+        required_extensions: InstanceExtensions,
+    ) -> Result<Arc<Instance>, Validated<VulkanError>> {
+        let span = tracy_client::span!("App::create_instance");
+        #[cfg(target_os = "linux")]
+        {
+            Instance::new(
+                library,
+                InstanceCreateInfo {
+                    flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
+                    enabled_extensions: InstanceExtensions {
+                        khr_wayland_surface: true,
+                        khr_display: true,
+                        ext_swapchain_colorspace: true,
+                        ..required_extensions
+                    },
+                    ..Default::default()
+                },
+            )
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Instance::new(
+                library,
+                InstanceCreateInfo {
+                    flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
+                    enabled_extensions: InstanceExtensions {
+                        khr_win32_surface: true,
+                        ..required_extensions
+                    },
+                    ..Default::default()
+                },
+            )
         }
     }
 }
