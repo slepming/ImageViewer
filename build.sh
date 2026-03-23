@@ -41,7 +41,7 @@ project_building() {
     echo "windows building for x86_64-pc-windows-gnu"
     cargo build --target x86_64-pc-windows-gnu
   else
-    cargo run "$path_to_image"
+    cargo run --features tracy "$path_to_image"
   fi
 }
 

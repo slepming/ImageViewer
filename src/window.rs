@@ -1,7 +1,5 @@
 // https://github.com/vulkano-rs/vulkano/blob/master/examples/image/main.rs
-use std::{
-    ops::RangeInclusive, process::exit, result::Result::Ok, sync::Arc, thread, time::Duration,
-};
+use std::{ops::RangeInclusive, result::Result::Ok, sync::Arc};
 
 use crate::{
     os::manager::WindowManager,
@@ -9,6 +7,7 @@ use crate::{
 };
 use image::{GenericImageView, ImageReader};
 use log::{debug, error};
+#[cfg(feature = "tracy")]
 use tracy_client::{Client, GpuContext, SpanLocation, span_location};
 use vulkano::{
     DeviceSize, Validated, VulkanError, VulkanLibrary,
@@ -73,13 +72,6 @@ pub struct App {
     current_image: String, // Currently image is always first started image
     app_data: ImageData,
     render: Option<RenderContext>,
-    tracy: Option<TracyContext>,
-}
-
-pub struct TracyContext {
-    client: Arc<Client>,
-    #[allow(dead_code)]
-    gpu_context: Arc<GpuContext>,
 }
 
 pub struct ImageData {
@@ -120,8 +112,11 @@ trait Initialization {
 
 impl App {
     pub fn new(image: &str, e: &EventLoop<()>) -> App {
-        let span = tracy_client::span!("App::new");
-        span.emit_color(0xff0000);
+        #[cfg(feature = "tracy")]
+        {
+            let span = tracy_client::span!("App::new");
+            span.emit_color(0xff0000);
+        }
         let library = VulkanLibrary::new().expect("no local Vulkan library/dll");
         let required_extensions = Surface::required_extensions(&e).unwrap();
         let instance =
@@ -254,23 +249,6 @@ impl App {
         )
         .expect("error creation vertex buffer");
 
-        let mut tracy: Option<TracyContext> = None;
-
-        if let Some(tracy_client) = Client::running() {
-            let gpu_context = tracy_client
-                .new_gpu_context(
-                    Some("Hello"),
-                    tracy_client::GpuContextType::Vulkan,
-                    0,
-                    1_000_000_000.0,
-                )
-                .unwrap();
-            tracy = Some(TracyContext {
-                client: Arc::new(Client::running().unwrap()),
-                gpu_context: Arc::new(gpu_context),
-            })
-        }
-
         App {
             instance,
             device,
@@ -288,13 +266,15 @@ impl App {
             sampler,
             texture,
             render: None,
-            tracy,
         }
     }
 
     fn create_backend(&mut self, wm: Arc<WindowManager>) {
-        let span = tracy_client::span!("App::create_backend");
-        span.emit_color(0xffffff);
+        #[cfg(feature = "tracy")]
+        {
+            let span = tracy_client::span!("App::create_backend");
+            span.emit_color(0xffffff);
+        }
         let surface = Surface::from_window(self.instance.clone(), wm.window.clone()).unwrap();
 
         let (swapchain, images) = {
@@ -421,6 +401,7 @@ impl App {
         });
     }
     fn recreate_swapchain(rcx: &mut RenderContext, window_size: PhysicalSize<u32>) {
+        #[cfg(feature = "tracy")]
         let _span = tracy_client::span!("App::recreate_swapchain");
 
         rcx.previous_frame_end.as_mut().unwrap().cleanup_finished();
@@ -450,6 +431,7 @@ impl App {
         rcx: &mut RenderContext,
         image_index: u32,
     ) -> Arc<PrimaryAutoCommandBuffer> {
+        #[cfg(feature = "tracy")]
         let _span = tracy_client::span!("App::get_command_buffer");
         let mut builder = AutoCommandBufferBuilder::primary(
             memory.command_buffer_allocate.clone(),
@@ -496,6 +478,7 @@ impl App {
         builder.build().unwrap()
     }
     fn update(&mut self) {
+        #[cfg(feature = "tracy")]
         let _span = tracy_client::span!("App::update");
         let rcx = self.render.as_mut().unwrap();
         let window_size = rcx.wm.window.inner_size();
@@ -569,7 +552,8 @@ impl Initialization for App {
         instance: Arc<Instance>,
     ) -> Result<(Arc<Device>, impl ExactSizeIterator<Item = Arc<Queue>>), Validated<VulkanError>>
     {
-        let span = tracy_client::span!("App::create_device");
+        #[cfg(feature = "tracy")]
+        let _span = tracy_client::span!("App::create_device");
         let physical_device = instance
             .enumerate_physical_devices()
             .expect("could not enumerate physical devices")
@@ -615,7 +599,8 @@ impl Initialization for App {
         library: Arc<VulkanLibrary>,
         required_extensions: InstanceExtensions,
     ) -> Result<Arc<Instance>, Validated<VulkanError>> {
-        let span = tracy_client::span!("App::create_instance");
+        #[cfg(feature = "tracy")]
+        let _span = tracy_client::span!("App::create_instance");
         #[cfg(target_os = "linux")]
         {
             Instance::new(
@@ -687,10 +672,9 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 self.update();
-                self.tracy
-                    .as_ref()
+                #[cfg(feature = "tracy")]
+                tracy_client::Client::running()
                     .expect("tracy must be running")
-                    .client
                     .frame_mark();
             }
             _ => (),

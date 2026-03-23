@@ -3,12 +3,14 @@ use std::{env, process::exit};
 
 use anyhow::Ok;
 use log::{info, warn};
+#[cfg(feature = "tracy")]
 use tracy_client::Client;
 use window::App;
 use winit::event_loop::EventLoop;
 mod os;
 mod shaders;
 
+#[cfg(feature = "tracy")]
 #[global_allocator]
 static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
     tracy_client::ProfiledAllocator::new(std::alloc::System, 100);

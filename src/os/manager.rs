@@ -11,8 +11,10 @@ use winit::{event_loop::ActiveEventLoop, monitor::MonitorHandle, window::Window}
 use crate::os::linux::host::gethostname;
 
 pub struct WindowManager {
+    #[allow(dead_code)]
     pub monitor: MonitorHandle,
     pub window: Arc<Window>,
+    #[allow(dead_code)]
     pub hostname: Option<String>,
 }
 
