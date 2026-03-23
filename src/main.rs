@@ -9,6 +9,10 @@ use winit::event_loop::EventLoop;
 mod os;
 mod shaders;
 
+#[global_allocator]
+static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
+    tracy_client::ProfiledAllocator::new(std::alloc::System, 100);
+
 fn main() -> Result<(), anyhow::Error> {
     pretty_env_logger::init_timed();
     let args: Vec<String> = env::args().collect();

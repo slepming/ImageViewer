@@ -9,13 +9,13 @@ use crate::{
 };
 use image::{GenericImageView, ImageReader};
 use log::{debug, error};
-use tracy_client::{Client, GpuContext};
+use tracy_client::{Client, GpuContext, SpanLocation, span_location};
 use vulkano::{
     DeviceSize, Validated, VulkanError, VulkanLibrary,
     buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer},
     command_buffer::{
         AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferToImageInfo,
-        PrimaryCommandBufferAbstract, RenderPassBeginInfo,
+        PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract, RenderPassBeginInfo,
         allocator::StandardCommandBufferAllocator,
     },
     descriptor_set::{
@@ -56,6 +56,7 @@ use vulkano::{
 };
 use winit::{
     application::ApplicationHandler,
+    dpi::PhysicalSize,
     event::{ElementState, MouseScrollDelta, WindowEvent},
     event_loop::EventLoop,
     keyboard::{Key, NamedKey},
@@ -77,6 +78,7 @@ pub struct App {
 
 pub struct TracyContext {
     client: Arc<Client>,
+    #[allow(dead_code)]
     gpu_context: Arc<GpuContext>,
 }
 
@@ -342,6 +344,8 @@ impl App {
         }
     }
     fn create_backend(&mut self, wm: Arc<WindowManager>) {
+        let span = tracy_client::span!("App::create_backend");
+        span.emit_color(0xffffff);
         let surface = Surface::from_window(self.instance.clone(), wm.window.clone()).unwrap();
 
         let (swapchain, images) = {
@@ -467,58 +471,46 @@ impl App {
             swapchain,
         });
     }
-    fn update(&mut self) {
-        let rcx = self.render.as_mut().unwrap();
-        let window_size = rcx.wm.window.inner_size();
+    fn recreate_swapchain(rcx: &mut RenderContext, window_size: PhysicalSize<u32>) {
+        let _span = tracy_client::span!("App::recreate_swapchain");
 
-        if window_size.width == 0 || window_size.height == 0 {
-            return;
-        }
-        if rcx.recreate_swapchain {
-            rcx.previous_frame_end.as_mut().unwrap().cleanup_finished();
+        rcx.previous_frame_end.as_mut().unwrap().cleanup_finished();
 
-            let (new_swapchain, new_images) = rcx
-                .swapchain
-                .recreate(SwapchainCreateInfo {
-                    image_extent: window_size.into(),
-                    ..rcx.swapchain.create_info()
-                })
-                .unwrap();
+        let (new_swapchain, new_images) = rcx
+            .swapchain
+            .recreate(SwapchainCreateInfo {
+                image_extent: window_size.into(),
+                ..rcx.swapchain.create_info()
+            })
+            .unwrap();
 
-            rcx.swapchain = new_swapchain;
-            rcx.framebuffers = window_size_dependent_setup(&new_images, &rcx.render_pass);
-            rcx.viewport.extent = window_size.into();
-            rcx.recreate_swapchain = false;
-            debug!(
-                "Window changed size to: {:?}; swapchain size image extent {:?}",
-                window_size,
-                rcx.swapchain.create_info().image_extent
-            );
-        }
-
-        let (image_index, suboptimal, acqure_future) =
-            match acquire_next_image(rcx.swapchain.clone(), None).map_err(Validated::unwrap) {
-                Ok(r) => r,
-                Err(VulkanError::OutOfDate) => {
-                    rcx.recreate_swapchain = true;
-                    return;
-                }
-                Err(e) => panic!("failed to acquire next image: {e}"),
-            };
-
-        if suboptimal {
-            rcx.recreate_swapchain = true;
-        }
-
+        rcx.swapchain = new_swapchain;
+        rcx.framebuffers = window_size_dependent_setup(&new_images, &rcx.render_pass);
+        rcx.viewport.extent = window_size.into();
+        rcx.recreate_swapchain = false;
+        debug!(
+            "Window changed size to: {:?}; swapchain size image extent {:?}",
+            window_size,
+            rcx.swapchain.create_info().image_extent
+        );
+    }
+    fn get_command_buffer(
+        memory: &MemoryApp,
+        queue: u32,
+        zoom: Zoom,
+        rcx: &mut RenderContext,
+        image_index: u32,
+    ) -> Arc<PrimaryAutoCommandBuffer> {
+        let _span = tracy_client::span!("App::get_command_buffer");
         let mut builder = AutoCommandBufferBuilder::primary(
-            self.memory.command_buffer_allocate.clone(),
-            self.queue.queue_family_index(),
+            memory.command_buffer_allocate.clone(),
+            queue,
             CommandBufferUsage::OneTimeSubmit,
         )
         .unwrap();
 
         builder
-            .push_constants(rcx.pipeline.layout().clone(), 0, self.app_data.zoom)
+            .push_constants(rcx.pipeline.layout().clone(), 0, zoom)
             .unwrap()
             .begin_render_pass(
                 RenderPassBeginInfo {
@@ -541,18 +533,55 @@ impl App {
                 rcx.descriptor_set.clone(),
             )
             .unwrap()
-            .bind_vertex_buffers(0, self.memory.vertex_buffer.clone())
+            .bind_vertex_buffers(0, memory.vertex_buffer.clone())
             .unwrap();
 
         unsafe {
             builder
-                .draw(self.memory.vertex_buffer.clone().len() as u32, 1, 0, 0)
+                .draw(memory.vertex_buffer.clone().len() as u32, 1, 0, 0)
                 .unwrap();
         }
 
         builder.end_render_pass(Default::default()).unwrap();
 
-        let command_buffer = builder.build().unwrap();
+        builder.build().unwrap()
+    }
+    fn update(&mut self) {
+        let _span = tracy_client::span!("App::update");
+        let rcx = self.render.as_mut().unwrap();
+        let window_size = rcx.wm.window.inner_size();
+
+        rcx.previous_frame_end.as_mut().unwrap().cleanup_finished();
+
+        if window_size.width == 0 || window_size.height == 0 {
+            return;
+        }
+        if rcx.recreate_swapchain {
+            App::recreate_swapchain(rcx, window_size);
+        }
+
+        let (image_index, suboptimal, acqure_future) =
+            match acquire_next_image(rcx.swapchain.clone(), None).map_err(Validated::unwrap) {
+                Ok(r) => r,
+                Err(VulkanError::OutOfDate) => {
+                    rcx.recreate_swapchain = true;
+                    return;
+                }
+                Err(e) => panic!("failed to acquire next image: {e}"),
+            };
+
+        if suboptimal {
+            rcx.recreate_swapchain = true;
+        }
+
+        let command_buffer = App::get_command_buffer(
+            &self.memory,
+            self.queue.queue_family_index(),
+            self.app_data.zoom.clone(),
+            rcx,
+            image_index,
+        );
+
         let future = rcx
             .previous_frame_end
             .take()
